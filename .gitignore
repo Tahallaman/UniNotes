@@ -20,9 +20,10 @@ logs/
 
 # ── Incoming videos (manual input queue) ─────────────────────────
 Incoming/
+Lectures/
 
 # ── Exports (derived — regenerate with npm run export) ────────────
-Exports/
+Exports/**/*.json
 
 # ── Lecture video files (large binaries) ─────────────────────────
 Lectures/**/*.mp4
