@@ -1,0 +1,26 @@
+{
+  "name": "uninotes",
+  "version": "1.0.0",
+  "description": "GenAI university automation pipeline — polls Panopto, generates study notes via Gemini",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/main.ts",
+    "setup-auth:panopto": "tsx src/main.ts --auth panopto",
+    "setup-auth:gemini": "tsx src/main.ts --auth gemini",
+    "migrate": "tsx scripts/migrate-to-subfolders.ts",
+    "export": "tsx scripts/export-notes.ts",
+    "pretty": "tsx scripts/run-pretty.ts",
+    "local": "tsx scripts/process-local.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
