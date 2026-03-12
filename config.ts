@@ -19,7 +19,7 @@ export const CONFIG = {
     /** Delay between scrolls (ms) */
     scrollDelay: 2000,
     /** Timeout for page navigation (ms) */
-    navigationTimeout: 30_000,
+    navigationTimeout: 50_000,
   },
 
   /** Video splitting — max segment duration in seconds (e.g. 900 = 15 min) */

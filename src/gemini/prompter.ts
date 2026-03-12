@@ -64,25 +64,30 @@ export async function submitPromptAndWaitForResponse(
     log.warn("Editor appears empty after text insertion — prompt may not send correctly");
   }
 
-  // Give Angular/Quill a moment to process and enable the Send button
+  // Give Angular/Quill a moment to process the inserted text
   await page.waitForTimeout(1_000);
 
-  // Click the send button — wait for it to be both visible and enabled
+  // Wait for the send button to be visible and enabled. For large files,
+  // the video may still be uploading/processing server-side even after the
+  // upload chip appeared, so the send button stays disabled until the file
+  // is fully ready. Use a generous timeout (5 min) to accommodate this.
   const sendBtn = page.locator('button[aria-label="Send message"]');
+  await sendBtn.waitFor({ state: "visible", timeout: 30_000 });
+  log.info("Waiting for send button to be enabled (video may still be processing)...");
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector('button[aria-label="Send message"]');
+      return btn !== null && btn.getAttribute('aria-disabled') !== 'true';
+    },
+    undefined,
+    { timeout: CONFIG.gemini.responseTimeout },
+  );
+
+  // Send button is enabled — click it, fall back to Enter if click fails
   try {
-    await sendBtn.waitFor({ state: "visible", timeout: 30_000 });
-    // Also wait for it to be enabled (not disabled)
-    await page.waitForFunction(
-      () => {
-        const btn = document.querySelector('button[aria-label="Send message"]') as HTMLButtonElement | null;
-        return btn !== null && !btn.disabled;
-      },
-      { timeout: 15_000 },
-    );
     await sendBtn.click();
   } catch {
-    // Fallback: re-focus editor and press Enter
-    log.warn("Send button not clickable, re-focusing editor and pressing Enter");
+    log.warn("Send button click failed, re-focusing editor and pressing Enter");
     await inputLocator.click();
     await page.keyboard.press("Enter");
   }

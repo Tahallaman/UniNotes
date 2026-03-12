@@ -27,8 +27,19 @@ function fileHash(filePath: string): string {
   return createHash("md5").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+/**
+ * Returns true (skip copy) when the destination is already current:
+ *   - dest exists AND src mtime <= dest mtime  (export is at least as new as source)
+ * Falls back to content hash when mtimes are equal (e.g. FAT32 or copied files)
+ * to avoid a redundant overwrite.
+ */
 function isUpToDate(src: string, dest: string): boolean {
   if (!fs.existsSync(dest)) return false;
+  const srcMtime = fs.statSync(src).mtimeMs;
+  const destMtime = fs.statSync(dest).mtimeMs;
+  if (srcMtime < destMtime) return true;   // export is newer — keep it
+  if (srcMtime > destMtime) return false;  // source is newer — overwrite
+  // Equal mtimes: compare content to avoid a redundant copy
   const srcStat = fs.statSync(src);
   const destStat = fs.statSync(dest);
   if (srcStat.size !== destStat.size) return false;

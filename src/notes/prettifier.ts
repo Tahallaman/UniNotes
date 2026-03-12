@@ -16,6 +16,26 @@ export async function prettifyNotes(rawFilePath: string): Promise<string> {
   }
 
   const rawContent = fs.readFileSync(rawFilePath, "utf-8");
+  const rules = fs.readFileSync(promptsFile, "utf-8");
+
+  // Prepend an explicit no-tools instruction plus the formatting rules so
+  // Claude outputs raw markdown to stdout rather than attempting file writes.
+  // NOTE: --allowedTools "" is unreliable on Windows (cmd.exe drops the empty
+  // arg), so we rely on the prompt instruction instead.
+  const stdinContent = [
+    "IMPORTANT: You are running in automated stdout-capture mode.",
+    "Output ONLY raw markdown text. Do NOT use any tools (Write, Edit, Bash, etc.).",
+    "Do NOT describe what you are doing. Do NOT ask for approval.",
+    "Your entire response is read directly from stdout by the calling program.",
+    "",
+    "FORMATTING RULES:",
+    rules,
+    "",
+    "---",
+    "",
+    "LECTURE NOTES TO FORMAT:",
+    rawContent,
+  ].join("\n");
 
   log.info(`Prettifying notes: ${rawFilePath}`);
 
@@ -24,8 +44,8 @@ export async function prettifyNotes(rawFilePath: string): Promise<string> {
       "claude",
       [
         "-p",
-        "--append-system-prompt-file", promptsFile,
-        "Reformat and return the following lecture notes as polished markdown. Output ONLY the polished markdown, nothing else.",
+        "--allowedTools", "none",
+        "Reformat the lecture notes according to the FORMATTING RULES above. Output ONLY the polished markdown, nothing else.",
       ],
       {
         cwd: CONFIG.rootDir,
@@ -60,8 +80,7 @@ export async function prettifyNotes(rawFilePath: string): Promise<string> {
       resolve(stdout);
     });
 
-    // Pipe raw content to stdin
-    child.stdin.write(rawContent);
+    child.stdin.write(stdinContent);
     child.stdin.end();
 
     // Timeout after 5 minutes

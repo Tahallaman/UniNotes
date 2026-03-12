@@ -144,7 +144,7 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
         const bodyText = document.body.innerText || "";
         return bodyText.includes("search result available below");
       },
-      { timeout: 30_000 },
+      { timeout: 50_000 },
     ).catch(() => {
       log.warn("Timed out waiting for subscription list — page may be empty or auth expired");
     });

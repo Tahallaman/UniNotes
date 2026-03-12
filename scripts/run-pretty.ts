@@ -54,17 +54,33 @@ for (const entry of pending) {
 }
 console.log();
 
+const RULES = fs.readFileSync(PROMPTS_FILE, "utf-8");
+
 function prettify(entry: LectureEntry): Promise<void> {
   return new Promise((resolve, reject) => {
     const rawContent = fs.readFileSync(entry.rawPath, "utf-8");
+    const stdinContent = [
+      "IMPORTANT: You are running in automated stdout-capture mode.",
+      "Output ONLY raw markdown text. Do NOT use any tools (Write, Edit, Bash, etc.).",
+      "Do NOT describe what you are doing. Do NOT ask for approval.",
+      "Your entire response is read directly from stdout by the calling program.",
+      "",
+      "FORMATTING RULES:",
+      RULES,
+      "",
+      "---",
+      "",
+      "LECTURE NOTES TO FORMAT:",
+      rawContent,
+    ].join("\n");
     console.log(`[START] ${entry.label}`);
 
     const child = spawn(
       "claude",
       [
         "-p",
-        "--append-system-prompt-file", PROMPTS_FILE,
-        "Reformat and return the following lecture notes as polished markdown. Output ONLY the polished markdown, nothing else.",
+        "--allowedTools", "none",
+        "Reformat the lecture notes according to the FORMATTING RULES above. Output ONLY the polished markdown, nothing else.",
       ],
       { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"], shell: true },
     );
@@ -96,7 +112,7 @@ function prettify(entry: LectureEntry): Promise<void> {
       resolve();
     });
 
-    child.stdin.write(rawContent);
+    child.stdin.write(stdinContent);
     child.stdin.end();
 
     // 10 minute timeout per lecture

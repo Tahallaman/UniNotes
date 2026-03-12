@@ -6,38 +6,45 @@ import { log } from "../utils/logger.js";
 /**
  * Wait for Gemini to finish uploading AND processing a video file.
  *
- * Phase 1 — chip appears ("Cancel upload" while transferring, or "Remove file" if fast).
- * Phase 2 — "Remove file" chip appears: the file has fully reached Google's servers.
- *            Using this positive signal (rather than waiting for "Cancel upload" to
- *            disappear) correctly handles large files where "Cancel upload" may never
- *            appear or disappears before the upload completes.
- * Phase 3 — send button enabled: Gemini has indexed/transcribed the video server-side.
+ * Observed Gemini DOM behaviour (confirmed via Playwright inspection, March 2026):
+ *   - "Remove file" chip appears IMMEDIATELY on file selection — not when upload is done.
+ *   - A [role="progressbar"] is present inside input-area-v2 while uploading.
+ *   - The send button uses aria-disabled="true" (not the native .disabled property)
+ *     while the upload is in progress. btn.disabled is always false — unusable.
+ *   - When upload + server-side processing is complete: progressbar disappears AND
+ *     aria-disabled flips to "false".
+ *
+ * Phase 1 — file chip appears (fast — local UI acknowledges the file).
+ * Phase 2 — progressbar disappears: file fully transferred to Google's servers.
+ * Phase 3 — aria-disabled="false" on send button: Gemini has processed the video.
  */
 async function waitForVideoReady(page: Page, timeout: number): Promise<void> {
   const deadline = Date.now() + timeout;
 
-  // Phase 1: any chip appears (fast — local UI acknowledges the file)
+  // Phase 1: chip appears (fast — local UI acknowledges the file)
   await page.waitForSelector(
     'input-area-v2 [aria-label*="Remove file"], input-area-v2 [aria-label*="Cancel upload"]',
     { timeout },
   );
   log.info("Upload chip visible.");
 
-  // Phase 2: wait for "Remove file" to appear — positive signal that the file
-  // has been fully transferred to Google's servers. This correctly handles large
-  // files that take many minutes to upload (e.g. 2 GB+).
-  await page.waitForSelector(
-    'input-area-v2 [aria-label*="Remove file"]',
+  // Phase 2: progressbar disappears = file fully transferred to Google's servers.
+  // "Remove file" appears immediately so cannot be used as the upload-complete signal.
+  await page.waitForFunction(
+    () => !document.querySelector('input-area-v2 [role="progressbar"]'),
+    undefined,
     { timeout: deadline - Date.now() },
   );
   log.info("File transfer to Google complete. Waiting for Gemini to process video...");
 
-  // Phase 3: send button enabled = Gemini has indexed the video server-side
+  // Phase 3: aria-disabled="false" = Gemini has indexed/transcribed the video.
+  // Note: btn.disabled is always false for Angular Material buttons — unusable.
   await page.waitForFunction(
     () => {
-      const btn = document.querySelector('button[aria-label="Send message"]') as HTMLButtonElement | null;
-      return btn !== null && !btn.disabled;
+      const btn = document.querySelector('button[aria-label="Send message"]');
+      return btn !== null && btn.getAttribute('aria-disabled') !== 'true';
     },
+    undefined,
     { timeout: deadline - Date.now() },
   );
   log.info("Video ready — send button enabled.");
