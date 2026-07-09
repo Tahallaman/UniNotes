@@ -40,6 +40,17 @@ export async function downloadLecture(lecture: LectureRow): Promise<string> {
     // The player can take up to 60 s to initialise.
     const moreActionsBtn = page.locator('button[aria-label="More actions"]');
     await moreActionsBtn.waitFor({ state: "visible", timeout: 60_000 });
+
+    // Dismiss the Panopto notification banner if it's overlaying the controls.
+    // It intercepts pointer events and blocks clicks on the "More actions" button.
+    const banner = page.locator('#notificationBanner');
+    if (await banner.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      await page.evaluate(() => {
+        document.getElementById("notificationBanner")?.remove();
+      });
+      await page.waitForTimeout(300);
+    }
+
     await moreActionsBtn.click();
 
     // Step 3: Set up download listener BEFORE clicking (avoid race), then click "Download podcast"

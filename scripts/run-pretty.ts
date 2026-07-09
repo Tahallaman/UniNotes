@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { syncToWorkspace } from "../src/utils/workspaceSync.js";
 
 const ROOT = path.resolve(import.meta.dirname!, "..");
 const LECTURES_DIR = path.join(ROOT, "Lectures");
@@ -109,6 +110,14 @@ function prettify(entry: LectureEntry): Promise<void> {
 
       fs.writeFileSync(entry.prettyPath, stdout, "utf-8");
       console.log(`[DONE]  ${entry.label} (${stdout.length} chars)`);
+
+      // Sync to University workspace (non-fatal)
+      try {
+        const courseCode = path.basename(path.dirname(path.dirname(entry.prettyPath)));
+        syncToWorkspace(courseCode, entry.prettyPath);
+      } catch (syncErr) {
+        console.warn(`[SYNC]  Workspace sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
+      }
       resolve();
     });
 

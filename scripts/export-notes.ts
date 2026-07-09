@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { syncToWorkspace } from "../src/utils/workspaceSync.js";
 
 const ROOT = path.resolve(import.meta.dirname!, "..");
 const LECTURES_DIR = path.join(ROOT, "Lectures");
@@ -82,6 +83,13 @@ for (const course of fs.readdirSync(LECTURES_DIR)) {
       const prettySrc = path.join(lectureDir, "lecture.pretty.md");
       const prettyDest = path.join(EXPORTS_DIR, "Pretty", course, destFilename);
       copyIfNeeded(prettySrc, prettyDest);
+
+      // Also sync to University workspace (non-fatal)
+      try {
+        syncToWorkspace(course, prettySrc);
+      } catch (syncErr) {
+        console.warn(`[SYNC] Workspace sync failed for ${course}/${lecture}: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
+      }
     }
   }
 }

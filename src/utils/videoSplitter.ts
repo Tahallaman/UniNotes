@@ -31,9 +31,11 @@ async function splitIntoParts(
   videoPath: string,
   duration: number,
   segmentSeconds: number,
+  outputDir?: string,
 ): Promise<string[]> {
   const ext = path.extname(videoPath);
-  const base = videoPath.slice(0, -ext.length);
+  const basename = path.basename(videoPath, ext);
+  const dir = outputDir ?? path.dirname(videoPath);
   const numParts = Math.ceil(duration / segmentSeconds);
   const parts: string[] = [];
 
@@ -41,7 +43,7 @@ async function splitIntoParts(
 
   for (let i = 0; i < numParts; i++) {
     const startSec = i * segmentSeconds;
-    const partPath = `${base}_part${i + 1}${ext}`;
+    const partPath = path.join(dir, `${basename}_part${i + 1}${ext}`);
 
     const args = [
       "-y", "-ss", String(startSec), "-i", videoPath,
@@ -67,7 +69,7 @@ async function splitIntoParts(
  *
  * The original file is NOT deleted — callers are responsible for cleanup.
  */
-export async function splitVideoIfNeeded(videoPath: string): Promise<string[]> {
+export async function splitVideoIfNeeded(videoPath: string, outputDir?: string): Promise<string[]> {
   let duration: number;
   try {
     duration = await getVideoDuration(videoPath);
@@ -86,5 +88,5 @@ export async function splitVideoIfNeeded(videoPath: string): Promise<string[]> {
 
   const numParts = Math.ceil(duration / CONFIG.segmentSeconds);
   log.info(`Video exceeds ${CONFIG.segmentSeconds / 60} minutes — splitting into ${numParts} parts...`);
-  return splitIntoParts(videoPath, duration, CONFIG.segmentSeconds);
+  return splitIntoParts(videoPath, duration, CONFIG.segmentSeconds, outputDir);
 }

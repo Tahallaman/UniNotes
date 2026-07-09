@@ -38,6 +38,7 @@ import {
 } from "../src/notes/writer.js";
 import { prettifyNotes } from "../src/notes/prettifier.js";
 import { appendTodoItems } from "../src/todo/manager.js";
+import { syncToWorkspace } from "../src/utils/workspaceSync.js";
 
 const retryErrors = process.argv.includes("--retry");
 
@@ -124,6 +125,14 @@ function releaseLock(): void {
   } catch { /* already gone */ }
 }
 
+/** Remove split part files (skips the original video). */
+function cleanupParts(parts: string[], originalPath: string): void {
+  for (const part of parts) {
+    if (part === originalPath) continue;
+    try { fs.unlinkSync(part); } catch { /* already gone */ }
+  }
+}
+
 // ── Main processing loop ──────────────────────────────────────────────────────
 
 ensureDirectories();
@@ -155,11 +164,13 @@ for (const entry of pending) {
 
   console.log(`[START] ${entry.courseCode}/${entry.title}`);
 
+  let videoParts: string[] = [];
   try {
     updateStatus(entry.id, "processing");
 
-    // Split video if longer than 45 minutes
-    const videoParts = await splitVideoIfNeeded(entry.videoPath);
+    // Split video if longer than 45 minutes — parts go to temp/ so they
+    // don't get picked up as new lectures if the run fails midway.
+    videoParts = await splitVideoIfNeeded(entry.videoPath, CONFIG.paths.temp);
     const isMultiPart = videoParts.length > 1;
 
     let finalChatUrl = "";
@@ -258,6 +269,13 @@ for (const entry of pending) {
       const rawFilePath = path.join(lectureDir, "lecture.raw.md");
       const prettyMarkdown = await prettifyNotes(rawFilePath);
       writePrettyNotes(lectureDir, prettyMarkdown);
+
+      // Sync pretty notes to University workspace (non-fatal)
+      try {
+        syncToWorkspace(entry.courseCode, path.join(lectureDir, "lecture.pretty.md"));
+      } catch (syncErr) {
+        log.warn(`Workspace sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
+      }
     } catch (err) {
       log.warn(`Pretty notes failed (raw notes preserved): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -273,11 +291,7 @@ for (const entry of pending) {
     moveLectureVideo(entry.videoPath, lectureDir);
 
     // Clean up temp split parts (if any)
-    if (isMultiPart) {
-      for (const part of videoParts) {
-        try { fs.unlinkSync(part); } catch { /* ignore */ }
-      }
-    }
+    cleanupParts(videoParts, entry.videoPath);
 
     updateStatus(entry.id, "complete", { notes_file: lectureDir });
     console.log(`[DONE]  ${entry.courseCode}/${entry.title}`);
@@ -285,6 +299,8 @@ for (const entry of pending) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setError(entry.id, msg);
+    // Clean up temp split parts so they don't get picked up as new lectures
+    cleanupParts(videoParts, entry.videoPath);
     console.error(`[ERROR] ${entry.courseCode}/${entry.title}: ${msg}`);
     errors++;
   }

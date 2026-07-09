@@ -1,0 +1,61 @@
+/**
+ * Sync prettified lecture notes to the University workspace.
+ *
+ * Copies lecture.pretty.md into the appropriate course's `Unsorted Lectures/`
+ * folder. If the course folder doesn't exist, falls back to the root
+ * `Unsorted Lectures/` folder.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { CONFIG } from "../../config.js";
+import { log } from "./logger.js";
+
+function fileHash(filePath: string): string {
+  return createHash("md5").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function isUpToDate(src: string, dest: string): boolean {
+  if (!fs.existsSync(dest)) return false;
+  const srcStat = fs.statSync(src);
+  const destStat = fs.statSync(dest);
+  if (srcStat.mtimeMs < destStat.mtimeMs) return true;
+  if (srcStat.mtimeMs > destStat.mtimeMs) return false;
+  if (srcStat.size !== destStat.size) return false;
+  return fileHash(src) === fileHash(dest);
+}
+
+export function syncToWorkspace(courseCode: string, prettyFilePath: string): void {
+  const workspaceRoot = CONFIG.workspace.root;
+  const unsortedFolder = CONFIG.workspace.unsortedFolder;
+
+  if (!fs.existsSync(prettyFilePath)) {
+    log.warn(`[workspace-sync] Pretty file not found: ${prettyFilePath}`);
+    return;
+  }
+
+  // Determine destination: course folder if it exists, otherwise root fallback
+  const courseDir = path.join(workspaceRoot, courseCode);
+  const destDir = fs.existsSync(courseDir)
+    ? path.join(courseDir, unsortedFolder)
+    : path.join(workspaceRoot, unsortedFolder);
+
+  // Derive filename from parent directory (lecture title)
+  const lectureTitle = path.basename(path.dirname(prettyFilePath));
+  const destFilename = `${lectureTitle}.md`;
+  const destPath = path.join(destDir, destFilename);
+
+  // Skip if destination is already up-to-date
+  if (isUpToDate(prettyFilePath, destPath)) {
+    log.info(`[workspace-sync] Already up-to-date: ${destPath}`);
+    return;
+  }
+
+  // Ensure destination directory exists
+  fs.mkdirSync(destDir, { recursive: true });
+
+  // Copy the file
+  fs.copyFileSync(prettyFilePath, destPath);
+  log.info(`[workspace-sync] Synced → ${destPath}`);
+}

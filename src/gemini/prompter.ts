@@ -76,8 +76,11 @@ export async function submitPromptAndWaitForResponse(
   log.info("Waiting for send button to be enabled (video may still be processing)...");
   await page.waitForFunction(
     () => {
-      const btn = document.querySelector('button[aria-label="Send message"]');
-      return btn !== null && btn.getAttribute('aria-disabled') !== 'true';
+      const sendBtn = document.querySelector('button[aria-label="Send message"]');
+      if (!sendBtn) return false;
+      const gemWrapper = sendBtn.closest("gem-icon-button");
+      if (gemWrapper) return gemWrapper.getAttribute("aria-disabled") !== "true";
+      return sendBtn.getAttribute("aria-disabled") !== "true";
     },
     undefined,
     { timeout: CONFIG.gemini.responseTimeout },

@@ -140,12 +140,14 @@ export function insertLocalLecture(l: LocalLecture, retryErrors = false): boolea
 
   if (retryErrors) {
     const row = db.prepare("SELECT status FROM lectures WHERE id = ?").get(l.id) as { status: string } | undefined;
-    if (row?.status === "error") {
+    // Also retry "downloaded" — this occurs when a previous run was killed mid-processing:
+    // processing → (resetStaleStatuses on next startup) → downloaded → stuck here.
+    if (row?.status === "error" || row?.status === "downloaded") {
       db.prepare(`
         UPDATE lectures SET status = 'downloaded', temp_file = ?, error_message = NULL,
         updated_at = datetime('now') WHERE id = ?
       `).run(l.videoPath, l.id);
-      log.info(`Resetting errored lecture for retry: ${l.title} [${l.courseCode}]`);
+      log.info(`Resetting lecture for retry (was '${row?.status}'): ${l.title} [${l.courseCode}]`);
       return true;
     }
   }

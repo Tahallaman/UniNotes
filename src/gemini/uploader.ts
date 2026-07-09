@@ -6,48 +6,106 @@ import { log } from "../utils/logger.js";
 /**
  * Wait for Gemini to finish uploading AND processing a video file.
  *
- * Observed Gemini DOM behaviour (confirmed via Playwright inspection, March 2026):
- *   - "Remove file" chip appears IMMEDIATELY on file selection — not when upload is done.
- *   - A [role="progressbar"] is present inside input-area-v2 while uploading.
- *   - The send button uses aria-disabled="true" (not the native .disabled property)
- *     while the upload is in progress. btn.disabled is always false — unusable.
- *   - When upload + server-side processing is complete: progressbar disappears AND
- *     aria-disabled flips to "false".
+ * Observed Gemini DOM behaviour (confirmed via Playwright inspection, May 2026):
+ *   - After the May 2026 UI redesign, the file chip (if any) no longer reliably
+ *     has aria-label="Remove file" inside input-area-v2 — Phase 1 is best-effort.
+ *   - A [role="progressbar"] may appear while uploading, but is not guaranteed.
+ *   - aria-disabled="true" is on the outer <gem-icon-button> wrapper for the send
+ *     button, NOT on the inner <button> element. The inner button's aria-disabled
+ *     is always null — unusable for polling.
+ *   - When upload + server-side processing is complete: the gem-icon-button wrapper
+ *     aria-disabled flips to "false" (or disappears).
  *
- * Phase 1 — file chip appears (fast — local UI acknowledges the file).
+ * Phase 1 — best-effort chip/attachment detection (soft; non-blocking on timeout).
  * Phase 2 — progressbar disappears: file fully transferred to Google's servers.
- * Phase 3 — aria-disabled="false" on send button: Gemini has processed the video.
+ * Phase 3 — gem-icon-button wrapper aria-disabled="false": video processed.
  */
 async function waitForVideoReady(page: Page, timeout: number): Promise<void> {
   const deadline = Date.now() + timeout;
 
-  // Phase 1: chip appears (fast — local UI acknowledges the file)
-  await page.waitForSelector(
-    'input-area-v2 [aria-label*="Remove file"], input-area-v2 [aria-label*="Cancel upload"]',
-    { timeout },
-  );
-  log.info("Upload chip visible.");
+  // Phase 1: best-effort — detect file chip or attachment anywhere on the page.
+  // The exact selector varies across UI versions; soft-fail so Phase 3 can still complete.
+  try {
+    await page.waitForFunction(
+      () =>
+        !!document.querySelector('[aria-label*="Remove file"]') ||
+        !!document.querySelector('[aria-label*="Cancel upload"]') ||
+        !!document.querySelector('file-attachment-chip') ||
+        !!document.querySelector('attachment-chip') ||
+        !!document.querySelector('[class*="file-chip"]'),
+      undefined,
+      { timeout: 10_000 },
+    );
+    log.info("Upload chip visible.");
+  } catch {
+    log.warn("Upload chip not detected — proceeding to wait for upload completion via send button.");
+  }
 
-  // Phase 2: progressbar disappears = file fully transferred to Google's servers.
-  // "Remove file" appears immediately so cannot be used as the upload-complete signal.
-  await page.waitForFunction(
-    () => !document.querySelector('input-area-v2 [role="progressbar"]'),
-    undefined,
-    { timeout: deadline - Date.now() },
-  );
-  log.info("File transfer to Google complete. Waiting for Gemini to process video...");
+  // Phase 2: wait for any upload progressbar to appear and then disappear.
+  // First check if one appears within 5 s; if not, skip this phase entirely.
+  try {
+    await page.waitForSelector('[role="progressbar"]', { timeout: 5_000 });
+    log.info("Upload progress detected. Waiting for file transfer to complete...");
+    await page.waitForFunction(
+      () => !document.querySelector('[role="progressbar"]'),
+      undefined,
+      { timeout: deadline - Date.now() },
+    );
+    log.info("File transfer to Google complete. Waiting for Gemini to process video...");
+  } catch {
+    log.info("No upload progressbar detected — skipping Phase 2.");
+  }
 
-  // Phase 3: aria-disabled="false" = Gemini has indexed/transcribed the video.
-  // Note: btn.disabled is always false for Angular Material buttons — unusable.
+  // Phase 3: wait for the send button to be enabled.
+  // May 2026 UI: aria-disabled is on the outer <gem-icon-button> wrapper, not the
+  // inner <button>. We check the wrapper first, then fall back to the inner button.
   await page.waitForFunction(
     () => {
-      const btn = document.querySelector('button[aria-label="Send message"]');
-      return btn !== null && btn.getAttribute('aria-disabled') !== 'true';
+      const sendBtn = document.querySelector('button[aria-label="Send message"]');
+      if (!sendBtn) return false;
+      const gemWrapper = sendBtn.closest("gem-icon-button");
+      if (gemWrapper) return gemWrapper.getAttribute("aria-disabled") !== "true";
+      return sendBtn.getAttribute("aria-disabled") !== "true";
     },
     undefined,
     { timeout: deadline - Date.now() },
   );
   log.info("Video ready — send button enabled.");
+}
+
+/**
+ * Select a model in the Gemini model picker.
+ * Soft-fails with a warning if the picker can't be found or the model isn't listed.
+ *
+ * DOM (confirmed May 2026):
+ *   Picker button: button[aria-label^="Open mode picker"]  (shows current model as text)
+ *   Menu items:    gem-menu-item[role="menuitem"]  (text e.g. "3.5 Flash", "3.1 Pro")
+ */
+async function selectGeminiModel(page: Page, modelName: string): Promise<void> {
+  try {
+    const pickerBtn = page.locator('button[aria-label^="Open mode picker"]');
+    await pickerBtn.waitFor({ state: "visible", timeout: 5_000 });
+
+    // Skip if already selected (button text contains the model name)
+    const currentLabel = await pickerBtn.getAttribute("aria-label") ?? "";
+    if (currentLabel.toLowerCase().includes(modelName.toLowerCase())) {
+      log.info(`Model already set to "${modelName}", skipping picker.`);
+      return;
+    }
+
+    log.info(`Selecting Gemini model: ${modelName}`);
+    await pickerBtn.click();
+
+    const modelItem = page
+      .locator('gem-menu-item[role="menuitem"]')
+      .filter({ hasText: new RegExp(modelName.replace(".", "\\."), "i") })
+      .first();
+    await modelItem.waitFor({ state: "visible", timeout: 5_000 });
+    await modelItem.click();
+    log.info(`Model "${modelName}" selected.`);
+  } catch (err) {
+    log.warn(`Could not select model "${modelName}" — proceeding with current default. (${err})`);
+  }
 }
 
 /**
@@ -102,13 +160,44 @@ export async function authGemini(): Promise<void> {
 }
 
 /**
+ * Register a persistent handler that auto-dismisses Gemini's video upload consent
+ * dialog by clicking "Agree" whenever it appears. The handler fires for the lifetime
+ * of the page, so it covers both the initial upload and any subsequent uploads on
+ * the same page.
+ *
+ * Dialog DOM (confirmed May 2026):
+ *   Root:  [data-test-id="video-upload-consent-dialog-root"]
+ *   Agree: [data-test-id="video-upload-consent-dialog-agree-button"] button
+ */
+async function registerConsentDialogHandler(page: Page): Promise<void> {
+  const dialogLocator = page.locator('[data-test-id="video-upload-consent-dialog-root"]');
+  await page.addLocatorHandler(dialogLocator, async () => {
+    log.info("Video upload consent dialog detected — clicking Agree...");
+    try {
+      await page
+        .locator('[data-test-id="video-upload-consent-dialog-agree-button"] button')
+        .click({ timeout: 5_000 });
+      log.info("Consent dialog dismissed.");
+    } catch {
+      // Fallback: find any Agree button in the dialog
+      try {
+        await page.locator('button[aria-label="Agree"]').click({ timeout: 5_000 });
+        log.info("Consent dialog dismissed (fallback).");
+      } catch (err) {
+        log.warn(`Could not dismiss consent dialog: ${err}`);
+      }
+    }
+  });
+}
+
+/**
  * Upload a video file to a new Gemini chat and return the page (ready for prompting).
  * Also returns the chat URL for future reference.
  *
- * Real Gemini DOM flow (as of March 2026):
- *   1. Click button[aria-label="Open upload file menu"]  → opens mat-menu
- *   2. Click menuitem "Upload files"                      → opens native file chooser
- *   3. Handle filechooser event with Playwright           → file uploads
+ * Real Gemini DOM flow (as of May 2026):
+ *   1. Click button[aria-label="Upload & tools"]     → opens mat-menu
+ *   2. Click [role="menuitem"] "Upload files"        → opens native file chooser
+ *   3. Handle filechooser event with Playwright      → file uploads
  *   4. Wait for upload chip / file name to appear in input area
  */
 export async function uploadVideoToGemini(
@@ -127,22 +216,30 @@ export async function uploadVideoToGemini(
     waitUntil: "load",
   });
 
-  // Wait for the input area and upload button to be fully ready
+  // Wait for the input area to be fully ready
   await page.waitForSelector('input-area-v2', { timeout: 15_000 });
-  const uploadMenuBtn = page.locator('button[aria-label="Open upload file menu"]');
+
+  // Register consent dialog auto-dismissal before triggering any upload
+  await registerConsentDialogHandler(page);
+
+  // Select the desired model before uploading
+  await selectGeminiModel(page, CONFIG.gemini.model);
+
+  // Step 1: Open the upload file menu
+  // Gemini May 2026: button[aria-label="Upload & tools"]
+  const uploadMenuBtn = page.locator('button[aria-label="Upload & tools"]');
   await uploadMenuBtn.waitFor({ state: "visible", timeout: 15_000 });
-  // Debug: capture page state before clicking
   await page.screenshot({ path: "temp/gemini-debug.png" });
   log.info(`Gemini page URL before upload: ${page.url()}`);
   await page.waitForTimeout(500);
-
-  // Step 1: Open the upload file menu
   await uploadMenuBtn.click();
 
-  // Step 2: Wait for the menu to appear (mat-action-list with role="menu",
-  // items are <button role="menuitem">).
-  // Menu is <mat-action-list role="menu">, items are <button role="menuitem">.
-  const uploadFilesItem = page.locator('[aria-label="Upload file options"] [role="menuitem"]').first();
+  // Step 2: Wait for the "Upload files" menu item.
+  // aria-label="Upload files. Documents, data, code files" — filter by text for resilience.
+  const uploadFilesItem = page
+    .locator('[role="menuitem"]')
+    .filter({ hasText: /^Upload files/i })
+    .first();
   await uploadFilesItem.waitFor({ state: "visible", timeout: 10_000 });
 
   // Set up file chooser listener AFTER confirming the menu is open, then click
@@ -156,10 +253,6 @@ export async function uploadVideoToGemini(
   log.info("Video file selected, waiting for upload and processing to complete...");
 
   // Step 4: Wait for Gemini to finish uploading AND processing the video.
-  // Two-phase wait:
-  //   Phase 1 — chip appears (either "Cancel upload" during transfer or "Remove file" when done)
-  //   Phase 2 — Send button becomes enabled, which is the definitive signal that Gemini
-  //              has finished transcribing/processing the video server-side.
   await waitForVideoReady(page, CONFIG.gemini.uploadTimeout);
 
   // Capture the chat URL
@@ -182,13 +275,19 @@ export async function uploadAdditionalVideoToChat(
   log.info(`Uploading additional video to existing Gemini chat: ${fileName}`);
 
   await page.waitForSelector("input-area-v2", { timeout: 15_000 });
-  const uploadMenuBtn = page.locator('button[aria-label="Open upload file menu"]');
+
+  // Ensure consent dialog is handled (handler is idempotent — safe to register again)
+  await registerConsentDialogHandler(page);
+
+  // Gemini May 2026: button[aria-label="Upload & tools"]
+  const uploadMenuBtn = page.locator('button[aria-label="Upload & tools"]');
   await uploadMenuBtn.waitFor({ state: "visible", timeout: 15_000 });
   await page.waitForTimeout(500);
   await uploadMenuBtn.click();
 
   const uploadFilesItem = page
-    .locator('[aria-label="Upload file options"] [role="menuitem"]')
+    .locator('[role="menuitem"]')
+    .filter({ hasText: /^Upload files/i })
     .first();
   await uploadFilesItem.waitFor({ state: "visible", timeout: 10_000 });
 

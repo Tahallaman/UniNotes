@@ -28,6 +28,8 @@ export const CONFIG = {
   /** Gemini settings */
   gemini: {
     url: "https://gemini.google.com/app",
+    /** Model to select when opening a new Gemini chat (as it appears in the model picker) */
+    model: "3.5 Flash",
     /** How often to poll for response completion (ms) */
     pollInterval: 5_000,
     /** Number of consecutive unchanged polls before considering response complete */
@@ -72,5 +74,11 @@ export const CONFIG = {
   retry: {
     maxRetries: 3,
     delayMs: 2_000,
+  },
+
+  /** University workspace sync */
+  workspace: {
+    root: "C:\\Users\\you\\OneDrive\\University",
+    unsortedFolder: "Unsorted Lectures",
   },
 } as const;

@@ -23,6 +23,7 @@ import { splitVideoIfNeeded } from "./utils/videoSplitter.js";
 import { writeNotes, writePrettyNotes } from "./notes/writer.js";
 import { prettifyNotes } from "./notes/prettifier.js";
 import { appendTodoItems } from "./todo/manager.js";
+import { syncToWorkspace } from "./utils/workspaceSync.js";
 
 // ── CLI argument handling ──────────────────────────────────────
 
@@ -31,6 +32,18 @@ const authMode = args.includes("--auth")
   ? args[args.indexOf("--auth") + 1]
   : null;
 const retryErrors = args.includes("--retry");
+
+function loadIgnoredTitles(): Set<string> {
+  const p = path.join(CONFIG.rootDir, "ignored-lectures.txt");
+  if (!fs.existsSync(p)) return new Set();
+  return new Set(
+    fs.readFileSync(p, "utf-8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#"))
+      .map((l) => l.toLowerCase()),
+  );
+}
 
 async function main(): Promise<void> {
   ensureDirectories();
@@ -71,13 +84,20 @@ async function main(): Promise<void> {
       delayMs: CONFIG.retry.delayMs,
     });
 
+    const ignoredTitles = loadIgnoredTitles();
+    const isIgnored = (title: string) => ignoredTitles.has(title.toLowerCase().trim());
+
     for (const lecture of newLectures) {
+      if (isIgnored(lecture.title)) {
+        log.info(`Ignored lecture (in ignore list): ${lecture.title}`);
+        continue;
+      }
       insertLecture(toNewLecture(lecture));
     }
 
     // Step 2: Download new lectures
     log.info("Step 2: Downloading new lectures...");
-    const toDownload = getByStatus("new");
+    const toDownload = getByStatus("new").filter((r) => !isIgnored(r.title));
     for (const lecture of toDownload) {
       try {
         updateStatus(lecture.id, "downloading");
@@ -94,7 +114,7 @@ async function main(): Promise<void> {
 
     // Step 3: Process downloaded lectures through Gemini
     log.info("Step 3: Processing through Gemini...");
-    const toProcess = getByStatus("downloaded");
+    const toProcess = getByStatus("downloaded").filter((r) => !isIgnored(r.title));
     for (const lecture of toProcess) {
       try {
         updateStatus(lecture.id, "processing");
@@ -203,6 +223,13 @@ async function main(): Promise<void> {
           const rawFilePath = path.join(lectureDir, "lecture.raw.md");
           const prettyMarkdown = await prettifyNotes(rawFilePath);
           writePrettyNotes(lectureDir, prettyMarkdown);
+
+          // Sync pretty notes to University workspace (non-fatal)
+          try {
+            syncToWorkspace(lecture.course_code, path.join(lectureDir, "lecture.pretty.md"));
+          } catch (syncErr) {
+            log.warn(`Workspace sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
+          }
         } catch (err) {
           log.warn(`Pretty notes failed (raw notes preserved): ${err instanceof Error ? err.message : String(err)}`);
         }
