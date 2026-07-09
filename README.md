@@ -103,6 +103,38 @@ Exports/
   Pretty/<CourseCode>/<LectureTitle>.md
 ```
 
+## Vertex AI upload path
+
+By default, videos are uploaded through a Playwright-automated browser session at gemini.google.com. As an alternative, you can process videos through the **Vertex AI API** (Google Cloud) instead, using model `gemini-3.5-flash`. This avoids the browser entirely and is generally faster/more reliable, at the cost of Vertex AI usage charges.
+
+Select the mode with the `--uploader` flag (or the `UNINOTES_UPLOADER` env var):
+
+```bash
+npm run dev -- --uploader=api        # Panopto pipeline via Vertex AI
+npm run local -- --uploader=api      # local videos via Vertex AI
+
+npm run dev -- --uploader=browser    # explicit browser mode (also the default)
+```
+
+Resolution order: `--uploader=api|browser` CLI flag → `UNINOTES_UPLOADER` env var → default `browser`.
+
+### Prerequisites
+
+- A Google Cloud project with the Vertex AI API and Cloud Storage enabled, and billing/credits configured.
+- [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc) set up on this machine (`gcloud auth application-default login`) — the API path does not implement its own key handling.
+- Permission to create/use a GCS bucket in the target project (video chunks are staged there temporarily so Vertex can read them).
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `UNINOTES_UPLOADER` | `browser` | `api` or `browser` — see above |
+| `GOOGLE_CLOUD_PROJECT` | `config.ts: vertex.project` | GCP project ID used for Vertex AI + GCS |
+| `GOOGLE_CLOUD_LOCATION` | `us-central1` | GCP region for Vertex AI + the GCS bucket |
+| `UNINOTES_GCS_BUCKET` | `config.ts: vertex.gcsBucket` | Bucket video chunks are uploaded to before calling Gemini |
+
+The bucket is created automatically (uniform access, region-matched) if it doesn't already exist. Uploaded video chunks are deleted from the bucket after each part is processed (controlled by `vertex.cleanupUploads` in `config.ts`, best-effort — failures are logged, not fatal).
+
 ## Configuration
 
 All settings are in `config.ts`:
@@ -114,6 +146,9 @@ All settings are in `config.ts`:
 | `segmentSeconds` | 900 (15 min) | Videos longer than 45 min are split into segments |
 | `retry.maxRetries` | 3 | Retry attempts for download and Gemini failures |
 | `browser.headless` | false | Run browser visibly (set true to run headless) |
+| `vertex.model` | `gemini-3.5-flash` | Model used on the `--uploader=api` path |
+| `vertex.location` | `us-central1` | GCP region for Vertex AI + GCS bucket |
+| `vertex.cleanupUploads` | true | Delete GCS video chunks after each part is processed |
 
 ## Project structure
 

@@ -14,6 +14,8 @@
     "local": "tsx scripts/process-local.ts"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.21.0",
+    "@google/genai": "^2.11.0",
     "better-sqlite3": "^11.7.0",
     "playwright": "^1.50.0"
   },

@@ -81,4 +81,19 @@ export const CONFIG = {
     root: "C:\\Users\\you\\OneDrive\\University",
     unsortedFolder: "Unsorted Lectures",
   },
+
+  /** Vertex AI (Google Cloud) settings — used by the "api" uploader mode */
+  vertex: {
+    /** Google Cloud project ID. Override with env GOOGLE_CLOUD_PROJECT. */
+    project: "your-gcp-project",
+    /** Google Cloud region. Override with env GOOGLE_CLOUD_LOCATION. */
+    location: "us-central1",
+    /** Model used for generateContent calls on the API path. */
+    model: "gemini-3.5-flash",
+    /** GCS bucket video chunks are uploaded to before calling generateContent.
+     * Override with env UNINOTES_GCS_BUCKET. */
+    gcsBucket: "uninotes-videos-your-gcp-project",
+    /** Delete uploaded GCS objects after each part is processed (best-effort). */
+    cleanupUploads: true,
+  },
 } as const;

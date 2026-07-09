@@ -17,6 +17,7 @@ logs/
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 
 # ── Incoming videos (manual input queue) ─────────────────────────
 Incoming/

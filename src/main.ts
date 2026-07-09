@@ -18,12 +18,14 @@ import { downloadLecture } from "./panopto/downloader.js";
 import { uploadVideoToGemini, uploadAdditionalVideoToChat, authGemini } from "./gemini/uploader.js";
 import { submitPromptAndWaitForResponse } from "./gemini/prompter.js";
 import { buildPrompt, buildPromptMiddlePart, buildPromptFinalPart } from "./gemini/prompts.js";
+import { processLectureViaApi } from "./gemini/apiProcessor.js";
 import { parseGeminiResponse, type ParsedActions } from "./notes/parser.js";
 import { splitVideoIfNeeded } from "./utils/videoSplitter.js";
 import { writeNotes, writePrettyNotes } from "./notes/writer.js";
 import { prettifyNotes } from "./notes/prettifier.js";
 import { appendTodoItems } from "./todo/manager.js";
 import { syncToWorkspace } from "./utils/workspaceSync.js";
+import { resolveUploaderMode } from "./utils/uploaderMode.js";
 
 // ── CLI argument handling ──────────────────────────────────────
 
@@ -32,6 +34,7 @@ const authMode = args.includes("--auth")
   ? args[args.indexOf("--auth") + 1]
   : null;
 const retryErrors = args.includes("--retry");
+const uploaderMode = resolveUploaderMode(args);
 
 function loadIgnoredTitles(): Set<string> {
   const p = path.join(CONFIG.rootDir, "ignored-lectures.txt");
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
     }
 
     // Step 3: Process downloaded lectures through Gemini
-    log.info("Step 3: Processing through Gemini...");
+    log.info(`Step 3: Processing through Gemini (uploader mode: ${uploaderMode})...`);
     const toProcess = getByStatus("downloaded").filter((r) => !isIgnored(r.title));
     for (const lecture of toProcess) {
       try {
@@ -129,7 +132,14 @@ async function main(): Promise<void> {
 
         const MAX_RETRIES = 2;
 
-        if (isMultiPart) {
+        if (uploaderMode === "api") {
+          // API path: Vertex AI handles part-by-part processing internally,
+          // with the same multi-part/single-part semantics as the browser path.
+          const result = await processLectureViaApi(lecture.title, lecture.course_code, videoParts);
+          combinedMarkdown = result.markdown;
+          actions = result.actions;
+          finalChatUrl = result.chatUrl;
+        } else if (isMultiPart) {
           // Each part gets its own fresh Gemini chat — Gemini has known bugs
           // with multi-video conversations (ignores subsequent uploads).
           const markdownParts: string[] = [];

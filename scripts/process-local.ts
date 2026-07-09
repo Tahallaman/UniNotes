@@ -29,6 +29,7 @@ import {
   buildPromptMiddlePart,
   buildPromptFinalPart,
 } from "../src/gemini/prompts.js";
+import { processLectureViaApi } from "../src/gemini/apiProcessor.js";
 import { parseGeminiResponse } from "../src/notes/parser.js";
 import { splitVideoIfNeeded } from "../src/utils/videoSplitter.js";
 import {
@@ -39,8 +40,11 @@ import {
 import { prettifyNotes } from "../src/notes/prettifier.js";
 import { appendTodoItems } from "../src/todo/manager.js";
 import { syncToWorkspace } from "../src/utils/workspaceSync.js";
+import { resolveUploaderMode } from "../src/utils/uploaderMode.js";
 
-const retryErrors = process.argv.includes("--retry");
+const cliArgs = process.argv.slice(2);
+const retryErrors = cliArgs.includes("--retry");
+const uploaderMode = resolveUploaderMode(cliArgs);
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".webm"]);
 
@@ -162,7 +166,7 @@ for (const entry of pending) {
     continue;
   }
 
-  console.log(`[START] ${entry.courseCode}/${entry.title}`);
+  console.log(`[START] ${entry.courseCode}/${entry.title} (uploader mode: ${uploaderMode})`);
 
   let videoParts: string[] = [];
   try {
@@ -179,7 +183,12 @@ for (const entry of pending) {
 
     const MAX_RETRIES = 2;
 
-    if (isMultiPart) {
+    if (uploaderMode === "api") {
+      const result = await processLectureViaApi(entry.title, entry.courseCode, videoParts);
+      combinedMarkdown = result.markdown;
+      actions = result.actions;
+      finalChatUrl = result.chatUrl;
+    } else if (isMultiPart) {
       const markdownParts: string[] = [];
 
       for (let i = 0; i < videoParts.length; i++) {
