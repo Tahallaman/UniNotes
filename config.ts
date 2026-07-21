@@ -86,13 +86,18 @@ export const CONFIG = {
   vertex: {
     /** Google Cloud project ID. Override with env GOOGLE_CLOUD_PROJECT. */
     project: "your-gcp-project",
-    /** Google Cloud region. Override with env GOOGLE_CLOUD_LOCATION. */
-    location: "us-central1",
+    /** Vertex endpoint region. Override with env GOOGLE_CLOUD_LOCATION.
+     * NOTE: gemini-3.5-flash is only served on "global" (returns 404 in us-central1). */
+    location: "global",
     /** Model used for generateContent calls on the API path. */
     model: "gemini-3.5-flash",
     /** GCS bucket video chunks are uploaded to before calling generateContent.
      * Override with env UNINOTES_GCS_BUCKET. */
     gcsBucket: "uninotes-videos-your-gcp-project",
+    /** GCS bucket region — must be a real Cloud Storage location. Kept separate
+     * from `location` because Vertex uses "global" but GCS rejects it.
+     * Override with env UNINOTES_GCS_BUCKET_LOCATION. */
+    bucketLocation: "us-central1",
     /** Delete uploaded GCS objects after each part is processed (best-effort). */
     cleanupUploads: true,
   },

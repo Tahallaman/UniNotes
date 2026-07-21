@@ -40,6 +40,10 @@ function resolveBucketName(): string {
   return process.env.UNINOTES_GCS_BUCKET || CONFIG.vertex.gcsBucket;
 }
 
+function resolveBucketLocation(): string {
+  return process.env.UNINOTES_GCS_BUCKET_LOCATION || CONFIG.vertex.bucketLocation;
+}
+
 let cachedClient: GoogleGenAI | null = null;
 function getClient(): GoogleGenAI {
   if (!cachedClient) {
@@ -69,9 +73,9 @@ async function ensureBucket(): Promise<string> {
   const bucket = storage.bucket(bucketName);
   const [exists] = await bucket.exists();
   if (!exists) {
-    log.info(`Creating GCS bucket "${bucketName}" in ${resolveLocation()}...`);
+    log.info(`Creating GCS bucket "${bucketName}" in ${resolveBucketLocation()}...`);
     await storage.createBucket(bucketName, {
-      location: resolveLocation(),
+      location: resolveBucketLocation(),
       uniformBucketLevelAccess: true,
     });
     log.info(`Bucket "${bucketName}" created.`);
