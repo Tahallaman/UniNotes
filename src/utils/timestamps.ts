@@ -16,6 +16,19 @@
 const BRACKETED = /([[(])(\d{1,2}:[0-5]\d(?::[0-5]\d)?)([\])])/g;
 
 /**
+ * A bracketed range: [00:00 - 00:28], [1:02:00–1:05:30].
+ *
+ * Needed because BRACKETED requires the closing bracket immediately after the
+ * timestamp, so a range matched nothing and both ends silently kept the
+ * segment-local value — a timestamp that looks right and points at the wrong
+ * place in a two-hour recording. Observed as soon as the prompt started
+ * demanding timestamps: the model reaches for ranges to describe a span with no
+ * content, which is exactly what the prompt asks it to do.
+ */
+const BRACKETED_RANGE =
+  /([[(])(\d{1,2}:[0-5]\d(?::[0-5]\d)?)(\s*[-–—]\s*)(\d{1,2}:[0-5]\d(?::[0-5]\d)?)([\])])/g;
+
+/**
  * A bare timestamp at the start of a line or list item, e.g. "- 02:15 — Topic".
  * Deliberately anchored: an unanchored scan would also rewrite ratios ("3:1"),
  * scores, and verse references scattered through prose.
@@ -57,7 +70,19 @@ export function formatTimestamp(totalSeconds: number): string {
 export function shiftTimestamps(markdown: string, offsetSeconds: number): string {
   if (offsetSeconds < 0) return markdown;
 
-  let out = markdown.replace(BRACKETED, (match, open: string, ts: string, close: string) => {
+  // Ranges first: BRACKETED would otherwise consume neither end, and running it
+  // first would leave the range's second timestamp unshifted.
+  let out = markdown.replace(
+    BRACKETED_RANGE,
+    (match, open: string, from: string, dash: string, to: string, close: string) => {
+      const a = parseTimestamp(from);
+      const b = parseTimestamp(to);
+      if (a === null || b === null) return match;
+      return `${open}${formatTimestamp(a + offsetSeconds)}${dash}${formatTimestamp(b + offsetSeconds)}${close}`;
+    },
+  );
+
+  out = out.replace(BRACKETED, (match, open: string, ts: string, close: string) => {
     const seconds = parseTimestamp(ts);
     return seconds === null ? match : `${open}${formatTimestamp(seconds + offsetSeconds)}${close}`;
   });

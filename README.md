@@ -407,9 +407,8 @@ cheaper than a lecture you wrongly believe you have. Selecting the model is
 likewise fatal after three attempts, so a lecture can't be split across two
 models without a record. `npm run test:attach` guards the check.
 
-Signs you're looking at fabricated notes: almost no timestamps across a long
-lecture, parts that disagree about which part they are, and per-part generation
-times far shorter than a text-only prettify of the same lecture.
+The reliable sign of fabricated notes is content that is generic where it should
+be specific — a plausible syllabus rather than what was on the slides.
 
 **Timestamp rebasing.** Each part is uploaded as a standalone video, so Gemini numbers
 every segment from 00:00 — part 2 saying `[02:00]` really means 17:00. The prompts pin
@@ -463,6 +462,7 @@ scripts/
   probe-vertex.ts      # verify the Vertex model is reachable
   probe-browser.ts     # verify Gemini sign-in + concurrent tabs
   test-attachment-detect.ts  # regression test for the attachment check
+  test-timestamps.ts   # regression test for timestamp rebasing
   export-notes.ts      # export to Exports/
 prompts/
   pretty-notes.txt     # prettifier formatting rules
@@ -505,9 +505,10 @@ things are Windows-only: the **Schedule** tab (Windows Task Scheduler) and
 
 Issues and pull requests are welcome. Two things to know before you open one:
 
-- `npm run typecheck` and `npm run test:attach` must pass. There is no broad
-  test suite; the probes (`npm run probe:browser`, `npm run probe:vertex`) are
-  how the external dependencies get verified.
+- `npm test` must pass (typecheck + the two regression tests). Both tests are
+  pure string/DOM work — no browser session, no network. The probes
+  (`npm run probe:browser`, `npm run probe:vertex`) are how the external
+  dependencies get verified.
 - Comments here explain *why*, not *what*. If a value or an approach is
   non-obvious, the reason it was chosen is the useful half.
 

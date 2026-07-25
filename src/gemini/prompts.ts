@@ -17,8 +17,29 @@ Your notes must be grounded exclusively in what the lecturer actually says and s
  * to add its own offset — arithmetic it can get wrong invisibly — we require a
  * single unambiguous format and let src/utils/timestamps.ts do the shifting.
  */
-const TIMESTAMP_FORMAT = `Write every timestamp in square brackets as [MM:SS] or [H:MM:SS], measured from the START OF THIS VIDEO (00:00).
-Do not try to account for any earlier segments — offsets are applied automatically afterwards.`;
+const TIMESTAMP_FORMAT = `## Timestamps — required
+
+Timestamps are the point of these notes: they are what lets a reader jump back to
+the moment in the recording. Notes without them are much less useful, so treat
+this as a hard requirement rather than a nicety.
+
+1. EVERY section heading you write must begin with a timestamp in square brackets.
+2. Add a timestamp to any individual definition, quote, example or demo worth
+   returning to.
+3. Use [MM:SS], or [H:MM:SS] only once past an hour. Always two-digit minutes.
+4. Measure from the START OF THIS VIDEO (00:00). Do NOT add an offset for earlier
+   segments — that is applied automatically afterwards.
+5. If a stretch of video has no content worth noting, still say so with the range
+   it covers, e.g. "[04:10] Nothing on screen until [09:30]."
+
+Shape to follow:
+
+### [00:41] Dispatch and the ready list
+- **Ready list** — the queue of tasks eligible to run.
+- [01:05] "The dispatcher never decides *which* task, only *when*" — lecturer.
+- [02:40] Diagram: per-core ready lists feeding a single dispatcher.
+
+Never write a heading without its timestamp.`;
 
 /**
  * Build the prompt for a non-final segment of a multi-part lecture video.
@@ -40,7 +61,6 @@ Write comprehensive Markdown study notes covering everything in this segment:
 - Definitions, theorems, formulas, or frameworks as stated by the lecturer
 - All examples and demonstrations shown, described concretely
 - Any diagrams or slides (represent as text/ASCII)
-- Timestamps for each major topic shift
 
 ${TIMESTAMP_FORMAT}
 
@@ -69,7 +89,7 @@ Please provide TWO parts in your response:
 
 Write comprehensive Markdown study notes for this final segment, continuing from where previous parts left off:
 
-- All concepts the lecturer explains in this segment, with timestamps
+- All concepts the lecturer explains in this segment
 - Definitions, formulas, or frameworks as stated by the lecturer
 - All examples and demonstrations, described concretely
 - Any diagrams or slides (represent as text/ASCII)
@@ -112,7 +132,7 @@ Please provide TWO parts in your response:
 Write extensive Markdown study notes covering everything the lecturer actually discusses:
 
 - A title and overview of the topics covered in this specific recording
-- All concepts explained, with timestamps and the lecturer's exact wording where notable
+- All concepts explained, with the lecturer's exact wording where notable
 - Definitions, theorems, formulas, or frameworks as stated by the lecturer
 - All examples and demonstrations shown, described concretely
 - Any diagrams or slides (represent as text/ASCII)

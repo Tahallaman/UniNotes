@@ -90,7 +90,8 @@ export async function runLectureParts(opts: {
       ctx: partCtx,
     });
 
-    const parsed = parseGeminiResponse(raw);
+    // Only the final part (or an unsplit lecture) is asked for json-actions.
+    const parsed = parseGeminiResponse(raw, isLast || totalParts === 1);
 
     // Gemini sees each part as its own video starting at 00:00, so rebase onto
     // the real lecture timeline before anything else consumes the markdown.

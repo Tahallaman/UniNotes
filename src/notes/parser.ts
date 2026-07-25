@@ -14,8 +14,15 @@ export interface ParsedResponse {
 
 /**
  * Parse the Gemini response into clean Markdown notes and structured JSON actions.
+ *
+ * `expectActions` says whether a json-actions block was actually asked for. Only
+ * the final part of a split lecture (and an unsplit one) requests it, so on a
+ * 8-part lecture the block is *correctly* absent 7 times. Warning anyway printed
+ * "No json-actions block found" on almost every part of every run, which reads
+ * like a fault and isn't one — and a log that cries wolf every run is how the
+ * genuine failures in it get scrolled past.
  */
-export function parseGeminiResponse(raw: string): ParsedResponse {
+export function parseGeminiResponse(raw: string, expectActions = true): ParsedResponse {
   // Extract the ---JSON-ACTIONS-START--- ... ---JSON-ACTIONS-END--- block.
   // Plain-text delimiters survive Gemini's HTML rendering (unlike ``` code fences
   // which get stripped when extracting innerText from the page).
@@ -41,8 +48,9 @@ export function parseGeminiResponse(raw: string): ParsedResponse {
     } catch (err) {
       log.warn(`Failed to parse json-actions block: ${err}`);
     }
-  } else {
-    log.warn("No json-actions block found in Gemini response");
+  } else if (expectActions) {
+    // Now a real signal: this response was supposed to carry the block.
+    log.warn("No json-actions block found in Gemini response — TODO items and frontmatter topics will be missing");
   }
 
   // Clean up the markdown
