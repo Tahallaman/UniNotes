@@ -148,8 +148,13 @@ export const DEFAULTS = {
     delayMs: 2_000,
   },
 
-  /** University workspace sync */
+  /**
+   * A second copy of each pretty note, filed into another folder as it's written
+   * — typically the OneDrive folder you actually study from.
+   */
   workspace: {
+    /** Turn the second copy off entirely. Nothing else here applies when false. */
+    enabled: true as boolean,
     root: "C:\\Users\\you\\OneDrive\\University",
     unsortedFolder: "Unsorted Lectures",
   },

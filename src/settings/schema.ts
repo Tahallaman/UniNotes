@@ -30,6 +30,13 @@ export interface SettingField {
   slider?: boolean;
   /** Shown in a warning colour — changing it has consequences beyond the next run. */
   caution?: string;
+  /**
+   * Path of a boolean setting that switches this one on. When that setting is
+   * off, this one is greyed out — a folder box you can still type into while the
+   * feature is disabled invites you to configure something that won't happen.
+   * Still validated normally, so the value survives being toggled off and on.
+   */
+  dependsOn?: string;
 }
 
 export const SETTING_FIELDS: readonly SettingField[] = [
@@ -215,13 +222,21 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     help: "Gap between starting one Gemini tab and the next. Raise it if Google serves the \"unusual traffic\" check; 0 disables staggering.",
   },
 
-  // ── Workspace ───────────────────────────────────────────────────────────
+  // ── Second copy ─────────────────────────────────────────────────────────
+  {
+    path: "workspace.enabled",
+    label: "Keep a second copy",
+    group: "Second copy",
+    type: "bool",
+    help: "Copies each pretty note into another folder as it's written.",
+  },
   {
     path: "workspace.root",
-    label: "Workspace root",
-    group: "Workspace",
+    label: "Folder",
+    group: "Second copy",
     type: "text",
-    help: "Pretty notes are mirrored here after each lecture. Sync failures are non-fatal.",
+    dependsOn: "workspace.enabled",
+    help: "Copies land in <Course>/Unsorted Lectures/. A failure here never fails the lecture.",
   },
 ];
 

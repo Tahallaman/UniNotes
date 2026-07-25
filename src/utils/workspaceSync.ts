@@ -1,9 +1,9 @@
 /**
- * Sync prettified lecture notes to the University workspace.
+ * Keep a second copy of each pretty note in another folder.
  *
- * Copies lecture.pretty.md into the appropriate course's `Unsorted Lectures/`
- * folder. If the course folder doesn't exist, falls back to the root
- * `Unsorted Lectures/` folder.
+ * Copies lecture.pretty.md into that folder's `<CourseCode>/Unsorted Lectures/`,
+ * falling back to a top-level `Unsorted Lectures/` when the course folder doesn't
+ * exist. Off entirely when `workspace.enabled` is false.
  */
 
 import fs from "node:fs";
@@ -27,6 +27,10 @@ function isUpToDate(src: string, dest: string): boolean {
 }
 
 export function syncToWorkspace(courseCode: string, prettyFilePath: string): void {
+  // Checked here rather than at each of the four call sites, so turning it off
+  // can't be missed by one of them.
+  if (!CONFIG.workspace.enabled) return;
+
   const workspaceRoot = CONFIG.workspace.root;
   const unsortedFolder = CONFIG.workspace.unsortedFolder;
 

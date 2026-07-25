@@ -241,6 +241,8 @@ All settings are in `config.ts`:
 | `vertex.generation.pretty.model` | `gemini-3.6-flash` | Model for prettifying (thinking disabled) |
 | `vertex.location` | `global` | 3.x Flash models are only served on `global` |
 | `vertex.cleanupUploads` | true | Delete GCS video chunks after each part is processed |
+| `workspace.enabled` | true | Keep a second copy of each pretty note in another folder |
+| `workspace.root` | OneDrive path | Where that copy goes — `<Course>/Unsorted Lectures/` inside it |
 
 **Setting every `concurrency` value to 1 reproduces the original fully-sequential
 behaviour** — the first thing to try when debugging.

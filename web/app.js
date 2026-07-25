@@ -792,7 +792,10 @@ function renderSettings() {
 }
 
 function renderSetting(field) {
-  const wrap = el("div", { class: "set" });
+  // A setting whose feature is switched off is shown but not editable — leaving
+  // it live invites you to configure something that isn't going to happen.
+  const inactive = field.dependsOn !== undefined && currentValue(field.dependsOn) === false;
+  const wrap = el("div", { class: `set${inactive ? " set-off" : ""}` });
   const dirty = field.path in state.draft;
   const overridden = state.settings.overridden.includes(field.path);
 
@@ -849,6 +852,10 @@ function renderSetting(field) {
     input.value = value ?? "";
     input.addEventListener("change", () => setDraft(field.path, input.value));
     control.append(input);
+  }
+
+  if (inactive) {
+    control.querySelectorAll("input, select, button").forEach((node) => { node.disabled = true; });
   }
 
   wrap.append(control);

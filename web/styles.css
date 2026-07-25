@@ -300,6 +300,7 @@ main { padding-bottom: 5rem; }
   display: grid; grid-template-columns: 15rem 1fr; gap: .25rem 1.5rem;
   padding: .9rem .1rem; border-bottom: 1px solid var(--line); align-items: baseline;
 }
+.set.set-off { opacity: .45; }
 .set-name { font-weight: 550; }
 .set-name .changed { color: var(--busy); margin-left: .35rem; }
 .set-name .overridden { color: var(--faint); margin-left: .35rem; }
