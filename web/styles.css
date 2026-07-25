@@ -281,6 +281,8 @@ main { padding-bottom: 5rem; }
 .status.is-error { color: var(--broken); }
 .status.is-done  { color: var(--ready); }
 .status.is-work  { color: var(--busy); }
+/* Skipped as empty: a real outcome, but not one that wants your attention. */
+.status.is-muted { color: var(--muted); }
 
 .files { font-family: var(--mono); font-size: var(--s-1); letter-spacing: .02em; }
 .files .yes { color: var(--ready); }

@@ -2,9 +2,13 @@
  * Regression test for blank-segment detection (src/utils/blankVideo.ts).
  *
  * Builds its own fixtures with ffmpeg, so it needs no lecture video and nothing
- * from the network. Four shapes, and the two negatives matter most: skipping a
- * real lecture is far worse than paying for an empty one, so the detector
- * requires a segment to be BOTH visually dead AND silent.
+ * from the network. Six shapes, and the negatives matter most: skipping a real
+ * lecture is far worse than paying for an empty one, so the detector requires a
+ * segment to be BOTH visually dead AND free of speech.
+ *
+ * static-roomtone and static-quiet-speech are the pair to keep an eye on. They
+ * differ only in level and sit either side of CONFIG.blankDetection.speechFloorDb;
+ * moving that setting is what breaks one of them.
  *
  *   npm run test:blank
  */
@@ -18,7 +22,10 @@ import { CONFIG } from "../config.js";
 
 const execFileAsync = promisify(execFile);
 const DIR = path.join(CONFIG.paths.temp, "blank-detect-fixtures");
-const D = 30;
+/** Longer than one audio chunk, so the contiguous scan is genuinely exercised. */
+const D = 120;
+/** Where the late-start fixture's speech begins — 87% in, mirroring 13:00 of 15:00. */
+const LATE_START = 104;
 
 async function ffmpeg(args: string[]): Promise<void> {
   await execFileAsync("ffmpeg", ["-y", "-loglevel", "error", ...args], { maxBuffer: 20 * 1024 * 1024 });
@@ -27,6 +34,32 @@ async function ffmpeg(args: string[]): Promise<void> {
 const silent = ["-f", "lavfi", "-i", `anullsrc=r=44100:cl=mono:d=${D}`];
 const tone = ["-f", "lavfi", "-i", `sine=frequency=300:duration=${D}`];
 const encode = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"];
+
+/**
+ * Attenuation applied to the sine, chosen to land each fixture at a real
+ * measured level rather than a made-up one.
+ *
+ * The encoded full-scale sine measures -21dB here, not the -3dB a raw sine
+ * would, so the offsets below are relative to that: -26 gives -47dB (the dead
+ * COMPSYS 730 recording) and -7 gives -28dB (a recording with real audio).
+ * Re-measure the base before changing these — it moves with the encoder.
+ */
+const atLevel = (db: number) => ["-af", `volume=${db}dB`];
+
+/**
+ * Room tone for most of the segment, then someone starts talking near the end.
+ *
+ * The case that killed the first design: a lecture that begins thirteen minutes
+ * into a fifteen-minute segment leaves any average over the whole segment
+ * looking dead, and the segment gets discarded along with the real content. The
+ * detector must key on the LOUDEST stretch, not the typical one.
+ */
+const lateStartAudio = [
+  "-f", "lavfi", "-i", `sine=frequency=300:duration=${D}`,
+  "-af",
+  `volume=volume=-26dB:enable='lt(t,${LATE_START})',` +
+    `volume=volume=-7dB:enable='gte(t,${LATE_START})'`,
+];
 
 async function buildFixtures(): Promise<void> {
   fs.mkdirSync(DIR, { recursive: true });
@@ -44,6 +77,16 @@ async function buildFixtures(): Promise<void> {
     ...encode, path.join(DIR, "static-audio.mp4")]);
   await ffmpeg(["-f", "lavfi", "-i", `testsrc=s=640x360:d=${D}:r=10`, ...silent,
     ...encode, path.join(DIR, "moving-silent.mp4")]);
+
+  // The pair that silencedetect alone cannot separate: both carry a signal above
+  // the -50dB silence floor, so both look like "has audio" to it. One is an
+  // unmiked room, the other is someone quietly talking.
+  await ffmpeg(["-f", "lavfi", "-i", stillScreen, ...tone, ...atLevel(-26),
+    ...encode, path.join(DIR, "static-roomtone.mp4")]);
+  await ffmpeg(["-f", "lavfi", "-i", stillScreen, ...tone, ...atLevel(-7),
+    ...encode, path.join(DIR, "static-quiet-speech.mp4")]);
+  await ffmpeg(["-f", "lavfi", "-i", stillScreen, ...lateStartAudio,
+    ...encode, path.join(DIR, "static-late-start.mp4")]);
 }
 
 // [file, expected blank?, why it matters]
@@ -52,6 +95,9 @@ const CASES: Array<[string, boolean, string]> = [
   ["static-silent.mp4", true, "idle desktop — frozen, not black, still nothing"],
   ["static-audio.mp4", false, "lecturer talking over one slide — MUST NOT skip"],
   ["moving-silent.mp4", false, "slides advancing, mic failed — MUST NOT skip"],
+  ["static-roomtone.mp4", true, "mic never live — room tone sits ABOVE the silence floor"],
+  ["static-quiet-speech.mp4", false, "quiet talker on a static slide — MUST NOT skip"],
+  ["static-late-start.mp4", false, "dead until 87% in, then the lecture starts — MUST NOT skip"],
 ];
 
 console.log("Building fixtures with ffmpeg...");
@@ -67,7 +113,8 @@ for (const [file, expected, why] of CASES) {
     `${ok ? "PASS" : "FAIL"}  ${file.padEnd(20)} blank=${String(result.blank).padEnd(5)} ` +
       `expect=${String(expected).padEnd(5)} ${why}`,
   );
-  if (!ok) console.log(`      dead=${result.deadFraction} silent=${result.silentFraction} :: ${result.summary}`);
+  console.log(`      ${result.summary}`);
+  if (!ok) console.log(`      dead=${result.deadFraction} loudest=${result.loudestDb} at=${result.loudestAt}`);
 }
 
 // The placeholder must carry rebased timestamps, or a skipped segment breaks

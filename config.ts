@@ -99,22 +99,54 @@ export const DEFAULTS = {
   blankDetection: {
     /** Turn the check off entirely; every lecture then processes as before. */
     enabled: true as boolean,
-    /** Short windows sampled across the file, rather than decoding all of it. */
+    /**
+     * Visual probes: short windows sampled across the file, rather than decoding
+     * all of it. Sampling is fine for "does the picture move" — unlike audio,
+     * where a sampled statistic would miss a lecture that starts late.
+     */
     probeCount: 8,
-    /** Length of each probe, in seconds. */
+    /** Length of each visual probe, in seconds. */
     probeSeconds: 4,
     /**
-     * Fraction of a probe that must be black/frozen/silent for the probe to
-     * count as dead. Below 1.0 because the filters report slightly less than the
-     * full window at the edges of a run.
+     * Fraction of a probe that must be black or frozen for the probe to count as
+     * dead. Below 1.0 because the filters report slightly less than the full
+     * window at the edges of a run.
      */
     coverage: 0.9,
     /** blackdetect pix_th — how dark counts as black. */
     blackPixelThreshold: 0.1,
     /** freezedetect noise floor (dB). Louder = more tolerant of compression noise. */
     freezeNoiseDb: -60,
-    /** silencedetect noise floor (dB). Room tone sits well below -50dB. */
-    silenceNoiseDb: -50,
+    /**
+     * Length of each audio chunk, in seconds.
+     *
+     * Long enough that one door closing barely moves a chunk's mean, short
+     * enough that a lecture starting late still fills a chunk of its own. The
+     * audio scan is contiguous, so no part of a segment goes unmeasured
+     * whatever this is set to — it only trades robustness against resolution.
+     */
+    audioChunkSeconds: 30,
+    /**
+     * Level (dBFS) above which a chunk counts as someone speaking.
+     *
+     * Compared against the LOUDEST chunk in the segment, so this answers "was
+     * anyone ever speaking here" — a lecture that starts thirteen minutes into a
+     * segment still clears it, where any average over the segment would be
+     * dragged under by the dead majority and throw the lecture away.
+     *
+     * silencedetect cannot do this job: a hall with the mic never switched on
+     * measures about -47dB, above any sane silence floor, so it reports no
+     * silence at all and a dead recording looks like it has audio. That is how
+     * COMPSYS 730's 21 Jul recording got uploaded in full.
+     *
+     * Measured on two real recordings — a dead one whose loudest 30s chunk was
+     * -40dB, and a live one whose loudest was -24dB. This sits between them,
+     * nearer the dead end so the doubt falls on the side of processing. Raising
+     * it toward -25 skips more; lowering it toward -45 skips less. Every check
+     * logs the level it measured, so a recording that lands on the wrong side
+     * tells you which way to move this and by how much.
+     */
+    speechFloorDb: -34,
   },
 
   /** Gemini settings */

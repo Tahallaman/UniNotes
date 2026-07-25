@@ -519,6 +519,9 @@ const STATUS_TONE = {
   downloading: "is-work",
   processed: "is-work",
   downloaded: "is-work",
+  // Deliberately not is-error. A recording skipped for being empty is the tool
+  // working, not failing, and colouring it red sends you looking for a fault.
+  blank: "is-muted",
 };
 
 function renderLibrary() {
@@ -549,7 +552,10 @@ function renderLibrary() {
     title.addEventListener("click", () => openDrawer(entry.key));
     cell.append(title);
     if (entry.errorMessage) {
-      cell.append(el("div", { class: "row-err", text: truncate(entry.errorMessage, 150) }));
+      // The blank status stores its reason in the same column as a failure, but
+      // it is an explanation, not a fault — so it reads as a note, not an alarm.
+      const tone = entry.status === "blank" ? "row-hint" : "row-err";
+      cell.append(el("div", { class: tone, text: truncate(entry.errorMessage, 150) }));
     }
     if (entry.checkpoint) {
       cell.append(el("div", {
@@ -689,7 +695,7 @@ function openDrawer(key) {
 
   fact("Folder", entry.lectureDir || "not written yet");
   fact("Updated", formatWhen(entry.updatedAt, true));
-  if (entry.errorMessage) fact("Error", entry.errorMessage);
+  if (entry.errorMessage) fact(entry.status === "blank" ? "Skipped" : "Error", entry.errorMessage);
   if (entry.checkpoint) fact("Resume", `${entry.checkpoint.done} of ${entry.checkpoint.total} parts checkpointed`);
   if (entry.panoptoUrl) fact("Panopto", link(entry.panoptoUrl, "Open recording"));
   if (entry.geminiChatUrl) fact("Gemini", link(entry.geminiChatUrl, "Open conversation"));
