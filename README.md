@@ -317,6 +317,7 @@ in environment variables, which win over both.
 | `gemini.responseTimeout` | 10 min | Max wait for one Gemini answer (a 29k-char response takes ~4 min) |
 | `gemini.uploadTimeout` | 30 min | Max wait for video upload (increase for large files) |
 | `segmentSeconds` | 900 (15 min) | Videos longer than this are split into segments |
+| `blankDetection.enabled` | true | Skip empty segments instead of paying a model call to describe them |
 | `retry.maxRetries` | 3 | Retry attempts for download and Gemini failures |
 | `browser.headless` | false | Run headless (verify with `npm run probe:browser` first) |
 | `browser.windowMode` | `offscreen` | `normal`, `offscreen`, or `hidden` — see below |
@@ -410,6 +411,22 @@ models without a record. `npm run test:attach` guards the check.
 The reliable sign of fabricated notes is content that is generic where it should
 be specific — a plausible syllabus rather than what was on the slides.
 
+**Blank segments are skipped, not described.** A recording that was started and
+never used — or one where the lecturer arrives ten minutes late — costs a model
+call per empty segment and returns nothing. Worse, an empty segment is precisely
+where the model invents: asked for notes on "part 2 of 8" of a named course with
+nothing on screen, it writes a plausible syllabus rather than reporting the
+silence. Each segment is therefore probed with ffmpeg before it is sent, and an
+empty one gets a locally-written placeholder instead of a model call.
+
+The check runs per *segment*, not per lecture, because a late start makes the
+first two or three segments blank and the rest perfectly good. A segment counts
+as blank only when it is **both** visually dead (black, or frozen on a static
+screen) **and** silent — a lecturer talking over one unchanging slide is a real
+lecture with a frozen picture, and an audio-only recording is worth just as much
+as a visual one. If every segment is blank the lecture is marked `blank` and no
+notes are written at all. Turn the whole thing off with `blankDetection.enabled`.
+
 **Timestamp rebasing.** Each part is uploaded as a standalone video, so Gemini numbers
 every segment from 00:00 — part 2 saying `[02:00]` really means 17:00. The prompts pin
 the format to `[MM:SS]` / `[H:MM:SS]` and `src/utils/timestamps.ts` adds
@@ -463,6 +480,7 @@ scripts/
   probe-browser.ts     # verify Gemini sign-in + concurrent tabs
   test-attachment-detect.ts  # regression test for the attachment check
   test-timestamps.ts   # regression test for timestamp rebasing
+  test-blank-detect.ts # regression test for blank-segment detection
   export-notes.ts      # export to Exports/
 prompts/
   pretty-notes.txt     # prettifier formatting rules
@@ -474,7 +492,8 @@ Processing state is tracked in `uninotes.db` (SQLite, gitignored):
 
 ```
 new → downloading → downloaded → processing → processed → complete
-                                                         ↘ error
+                                             │           ↘ error
+                                             ↘ blank  (nothing in the recording)
 ```
 
 Use `--retry` flags to reset errored lectures back into the pipeline.

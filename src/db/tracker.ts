@@ -9,6 +9,8 @@ export type LectureStatus =
   | "processing"
   | "processed"
   | "complete"
+  /** Recording contained no picture change and no sound — nothing to extract. */
+  | "blank"
   | "error";
 
 export interface LectureRow {

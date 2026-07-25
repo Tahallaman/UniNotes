@@ -49,10 +49,9 @@ export interface LectureJob {
   onComplete: "delete" | "move";
 }
 
-export interface LectureResult {
-  lectureDir: string;
-  prettyOk: boolean;
-}
+export type LectureResult =
+  | { blank: true; reason: string }
+  | { blank?: false; lectureDir: string; prettyOk: boolean };
 
 /** Resolved once by the entry point so CLI flags override config consistently. */
 export interface Providers {
@@ -86,6 +85,23 @@ export async function processLecture(
       runner: provider === "api" ? createApiRunner(job.id) : createBrowserRunner(),
       ctx,
     });
+
+    // Every segment was empty, so there is no lecture here to write up. Notes
+    // consisting only of "no content" placeholders are worse than none: they
+    // look like a processed lecture in the library and get exported and synced.
+    if (result.blankParts === videoParts.length) {
+      const reason = `all ${videoParts.length} segment(s) contained no picture change and no sound`;
+      log.warn(`Skipping — this recording is blank: ${reason}`, ctx);
+      updateStatus(job.id, "blank", { error_message: reason });
+      cleanupParts(videoParts, job.videoPath);
+      if (job.onComplete === "delete") deleteFile(job.videoPath, ctx);
+      clearCheckpoint(job.id);
+      return { blank: true, reason };
+    }
+
+    if (result.blankParts > 0) {
+      log.info(`${result.blankParts} of ${videoParts.length} segment(s) were blank and skipped.`, ctx);
+    }
 
     updateStatus(job.id, "processed", { gemini_chat_url: result.chatUrl });
 

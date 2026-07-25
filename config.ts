@@ -80,6 +80,43 @@ export const DEFAULTS = {
   /** Video splitting — max segment duration in seconds (e.g. 900 = 15 min) */
   segmentSeconds: 900,
 
+  /**
+   * Skip recordings that contain nothing, before they cost a pipeline run.
+   *
+   * A recording that was started and never used costs a download, a split, one
+   * Gemini call per part and a prettify — and an empty video is precisely when
+   * the model invents content to fill the silence rather than reporting that
+   * there was none.
+   *
+   * "Blank" means visually dead AND silent, never either alone: a lecturer
+   * talking over one unchanging slide is a good lecture with a frozen picture,
+   * and an audio-only recording is worth just as much as a visual one.
+   *
+   * Applied per SEGMENT, not per lecture. A recording that starts late is blank
+   * for its first two or three segments and fine afterwards, so a whole-lecture
+   * verdict would either skip a real lecture or pay for its empty parts.
+   */
+  blankDetection: {
+    /** Turn the check off entirely; every lecture then processes as before. */
+    enabled: true as boolean,
+    /** Short windows sampled across the file, rather than decoding all of it. */
+    probeCount: 8,
+    /** Length of each probe, in seconds. */
+    probeSeconds: 4,
+    /**
+     * Fraction of a probe that must be black/frozen/silent for the probe to
+     * count as dead. Below 1.0 because the filters report slightly less than the
+     * full window at the edges of a run.
+     */
+    coverage: 0.9,
+    /** blackdetect pix_th — how dark counts as black. */
+    blackPixelThreshold: 0.1,
+    /** freezedetect noise floor (dB). Louder = more tolerant of compression noise. */
+    freezeNoiseDb: -60,
+    /** silencedetect noise floor (dB). Room tone sits well below -50dB. */
+    silenceNoiseDb: -50,
+  },
+
   /** Gemini settings */
   gemini: {
     url: "https://gemini.google.com/app",

@@ -10,6 +10,8 @@ import { CONFIG } from "../../config.js";
 import { log, type LogContext } from "../utils/logger.js";
 import { mapWithLimit } from "../utils/limit.js";
 import { shiftTimestamps, partOffsetSeconds } from "../utils/timestamps.js";
+import { analyseBlankness, blankSegmentNote, BLANK_SEGMENT_MARKER } from "../utils/blankVideo.js";
+import { getVideoDuration } from "../utils/videoSplitter.js";
 import { parseGeminiResponse, type ParsedActions } from "../notes/parser.js";
 import { buildPrompt, buildPromptMiddlePart, buildPromptFinalPart } from "../gemini/prompts.js";
 import {
@@ -34,6 +36,23 @@ export interface LectureNotesResult {
   markdown: string;
   actions: ParsedActions | null;
   chatUrl: string;
+  /** Segments skipped as empty, counted across resumed runs too. */
+  blankParts: number;
+}
+
+/**
+ * The most recent part that actually held a conversation.
+ *
+ * A blank final segment is skipped without a model call, so it has no chat URL —
+ * and the lecture would otherwise link to nothing. Walks backwards to the last
+ * part that was really generated.
+ */
+function findLastChatUrl(chatUrls: Map<number, string>, totalParts: number): string {
+  for (let partNum = totalParts - 1; partNum >= 1; partNum--) {
+    const url = chatUrls.get(partNum);
+    if (url) return url;
+  }
+  return "";
 }
 
 export async function runLectureParts(opts: {
@@ -75,6 +94,28 @@ export async function runLectureParts(opts: {
       part: totalParts === 1 ? "single" : `${partNum}/${totalParts}`,
     };
 
+    const offsetSeconds = partOffsetSeconds(partNum, CONFIG.segmentSeconds);
+
+    // Checked per part, not per lecture: a recording that starts late is blank
+    // for its first two or three segments and perfectly good after that. Those
+    // segments are also exactly where the model invents — asked to write notes
+    // on "part 2 of 8" of a named course with nothing on screen, it produces a
+    // plausible syllabus rather than reporting the silence. Skipping them saves
+    // a Gemini call each AND removes the opportunity.
+    if (CONFIG.blankDetection.enabled) {
+      const partPath = videoParts[partNum - 1];
+      const partDuration = await getVideoDuration(partPath).catch(() => CONFIG.segmentSeconds);
+      const analysis = await analyseBlankness(partPath, partDuration, partCtx);
+      if (analysis.blank) {
+        const placeholder = blankSegmentNote(offsetSeconds, partDuration);
+        log.info(`Blank segment — skipped without a model call (${analysis.summary}).`, partCtx);
+        checkpoint.parts.set(partNum, placeholder);
+        checkpoint.chatUrls.set(partNum, "");
+        savePart(lectureId, fingerprint, totalParts, runner.name, partNum, placeholder, "");
+        return;
+      }
+    }
+
     const prompt =
       totalParts === 1
         ? buildPrompt(lectureTitle, courseCode)
@@ -95,10 +136,9 @@ export async function runLectureParts(opts: {
 
     // Gemini sees each part as its own video starting at 00:00, so rebase onto
     // the real lecture timeline before anything else consumes the markdown.
-    const offset = partOffsetSeconds(partNum, CONFIG.segmentSeconds);
-    const markdown = shiftTimestamps(parsed.markdown, offset);
-    if (offset > 0) {
-      log.debug(`Shifted timestamps by +${offset}s`, partCtx);
+    const markdown = shiftTimestamps(parsed.markdown, offsetSeconds);
+    if (offsetSeconds > 0) {
+      log.debug(`Shifted timestamps by +${offsetSeconds}s`, partCtx);
     }
 
     checkpoint.parts.set(partNum, markdown);
@@ -122,9 +162,15 @@ export async function runLectureParts(opts: {
     ordered.push(markdown);
   }
 
+  // Counted from the assembled markdown rather than a running tally, so parts
+  // restored from a checkpoint on a resumed run are recognised too.
+  const blankParts = ordered.filter((m) => m.includes(BLANK_SEGMENT_MARKER)).length;
+
   return {
     markdown: ordered.join("\n\n---\n\n"),
     actions: latestActions,
-    chatUrl: checkpoint.chatUrls.get(totalParts) ?? "",
+    // The last part carries the conversation, unless it was blank and never had one.
+    chatUrl: checkpoint.chatUrls.get(totalParts) || findLastChatUrl(checkpoint.chatUrls, totalParts),
+    blankParts,
   };
 }

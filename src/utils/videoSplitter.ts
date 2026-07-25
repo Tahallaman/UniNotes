@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 /**
  * Get the duration of a video file in seconds using ffprobe.
  */
-async function getVideoDuration(videoPath: string): Promise<number> {
+export async function getVideoDuration(videoPath: string): Promise<number> {
   const { stdout } = await execFileAsync("ffprobe", [
     "-v", "quiet",
     "-print_format", "json",
