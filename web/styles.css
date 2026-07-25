@@ -98,20 +98,27 @@ code { font-size: .92em; color: var(--ink-soft); }
 /* ── Masthead ────────────────────────────────────────────────────────────── */
 
 .masthead { border-bottom: 1px solid var(--line); background: var(--paper); position: sticky; top: 0; z-index: 30; }
-.masthead-inner { display: flex; align-items: baseline; gap: 2.25rem; height: 3.4rem; }
+/* Children stretch to the full bar height and centre their own text, rather
+   than sharing a baseline: baseline alignment pinned the whole row to the top
+   of the bar and left all the slack underneath. Stretching also lets the
+   current-tab underline sit on the masthead border by geometry instead of by a
+   hand-tuned offset that only held at one font size. */
+.masthead-inner { display: flex; align-items: stretch; gap: 2.25rem; height: 3.4rem; }
 .wordmark {
   margin: 0; font-size: var(--s1); font-weight: 620;
   letter-spacing: -.015em; white-space: nowrap;
+  display: flex; align-items: center;
 }
-.nav { display: flex; gap: 1.4rem; }
+.nav { display: flex; gap: 1.4rem; align-items: stretch; }
 .nav-item {
   appearance: none; border: 0; background: none; padding: 0; cursor: pointer;
   font: inherit; color: var(--muted); position: relative;
+  display: flex; align-items: center;
 }
 .nav-item:hover { color: var(--ink); }
 .nav-item.current { color: var(--ink); font-weight: 560; }
 .nav-item.current::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: -1.06rem;
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
   height: 2px; background: var(--ink);
 }
 
