@@ -89,8 +89,20 @@ export const DEFAULTS = {
     pollInterval: 5_000,
     /** Number of consecutive unchanged polls before considering response complete */
     stabilityChecks: 3,
-    /** Overall timeout for Gemini response (ms) */
-    responseTimeout: 5 * 60_000,
+    /**
+     * Overall timeout for one Gemini response (ms).
+     *
+     * Was 5 minutes, which a real prettify run came within a minute of: a
+     * 29,000-character answer took 4m06s, and that was a single-part lecture.
+     * A full lecture's raw notes are several times longer, so 5 minutes was a
+     * failure waiting to happen — and an expensive one, since exceeding it
+     * aborts the response entirely rather than keeping what streamed in.
+     *
+     * Sized at roughly 2.5× the longest observed generation. Raising it costs
+     * nothing on a healthy run; it only lengthens how long a genuinely stuck
+     * tab takes to give up — and that multiplies by retry.maxRetries.
+     */
+    responseTimeout: 10 * 60_000,
     /** Timeout for video upload + Gemini processing confirmation (ms) */
     uploadTimeout: 30 * 60_000,
   },

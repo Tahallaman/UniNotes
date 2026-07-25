@@ -310,7 +310,7 @@ in environment variables, which win over both.
 | `concurrency.vertexInFlight` | 8 | Global cap on concurrent Vertex calls |
 | `concurrency.gcsUploads` | 3 | Global cap on concurrent GCS uploads |
 | `concurrency.browserTabs` | 3 | Global cap on concurrent Gemini tabs |
-| `gemini.responseTimeout` | 5 min | Max wait for Gemini to respond |
+| `gemini.responseTimeout` | 10 min | Max wait for one Gemini answer (a 29k-char response takes ~4 min) |
 | `gemini.uploadTimeout` | 30 min | Max wait for video upload (increase for large files) |
 | `segmentSeconds` | 900 (15 min) | Videos longer than this are split into segments |
 | `retry.maxRetries` | 3 | Retry attempts for download and Gemini failures |

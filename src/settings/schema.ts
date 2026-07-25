@@ -230,6 +230,7 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     type: "int",
     min: 30_000,
     max: 3_600_000,
+    help: "Max wait for one Gemini answer. Long lectures generate tens of thousands of characters — a 29k-char response took just over 4 minutes.",
   },
   {
     path: "gemini.uploadTimeout",
