@@ -244,7 +244,16 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
     log.info(`${newLectures.length} new lecture(s) to process`);
     return newLectures;
   } finally {
-    await context.close();
+    // Closing the context is not enough. On the storage-state path,
+    // launchPanoptoBrowser() calls chromium.launch() and then newContext(), so a
+    // whole Browser process sits behind the context and survives its close —
+    // keeping the Node process alive with it. src/main.ts hid this by calling
+    // process.exit() explicitly; any script that just runs to completion would
+    // hang forever instead. `context.browser()` is null for a persistent
+    // context, which owns no separate browser to close.
+    const browser = context.browser();
+    await context.close().catch(() => {});
+    await browser?.close().catch(() => {});
   }
 }
 

@@ -1,7 +1,12 @@
 import path from "node:path";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import type { Page } from "playwright";
 import { CONFIG } from "../../config.js";
-import { log } from "../utils/logger.js";
+import { log, type LogContext } from "../utils/logger.js";
+import { assertNotRateLimited, debugScreenshotPath } from "./browserPool.js";
+
+// Browser launch and the tab pool live in browserPool.ts. This module only knows
+// how to drive an already-open Gemini tab.
+export { authGemini } from "./browserPool.js";
 
 /**
  * Wait for Gemini to finish uploading AND processing a video file.
@@ -20,7 +25,7 @@ import { log } from "../utils/logger.js";
  * Phase 2 — progressbar disappears: file fully transferred to Google's servers.
  * Phase 3 — gem-icon-button wrapper aria-disabled="false": video processed.
  */
-async function waitForVideoReady(page: Page, timeout: number): Promise<void> {
+async function waitForVideoReady(page: Page, timeout: number, ctx?: LogContext): Promise<void> {
   const deadline = Date.now() + timeout;
 
   // Phase 1: best-effort — detect file chip or attachment anywhere on the page.
@@ -36,29 +41,39 @@ async function waitForVideoReady(page: Page, timeout: number): Promise<void> {
       undefined,
       { timeout: 10_000 },
     );
-    log.info("Upload chip visible.");
+    log.info("Upload chip visible.", ctx);
   } catch {
-    log.warn("Upload chip not detected — proceeding to wait for upload completion via send button.");
+    log.warn("Upload chip not detected — proceeding to wait for upload completion via send button.", ctx);
   }
 
   // Phase 2: wait for any upload progressbar to appear and then disappear.
   // First check if one appears within 5 s; if not, skip this phase entirely.
   try {
     await page.waitForSelector('[role="progressbar"]', { timeout: 5_000 });
-    log.info("Upload progress detected. Waiting for file transfer to complete...");
+    log.info("Upload progress detected. Waiting for file transfer to complete...", ctx);
     await page.waitForFunction(
       () => !document.querySelector('[role="progressbar"]'),
       undefined,
       { timeout: deadline - Date.now() },
     );
-    log.info("File transfer to Google complete. Waiting for Gemini to process video...");
+    log.info("File transfer to Google complete. Waiting for Gemini to process video...", ctx);
   } catch {
-    log.info("No upload progressbar detected — skipping Phase 2.");
+    log.info("No upload progressbar detected — skipping Phase 2.", ctx);
   }
 
-  // Phase 3: wait for the send button to be enabled.
-  // May 2026 UI: aria-disabled is on the outer <gem-icon-button> wrapper, not the
-  // inner <button>. We check the wrapper first, then fall back to the inner button.
+  // Phase 3: send button enabled = video fully processed.
+  await waitForSendEnabled(page, deadline - Date.now());
+  log.info("Video ready — send button enabled.", ctx);
+}
+
+/**
+ * Wait until the send button is clickable.
+ *
+ * May 2026 UI: aria-disabled lives on the outer <gem-icon-button> wrapper, not
+ * the inner <button> — the inner element's aria-disabled is always null and so
+ * is useless for polling.
+ */
+export async function waitForSendEnabled(page: Page, timeout: number): Promise<void> {
   await page.waitForFunction(
     () => {
       const sendBtn = document.querySelector('button[aria-label="Send message"]');
@@ -68,9 +83,8 @@ async function waitForVideoReady(page: Page, timeout: number): Promise<void> {
       return sendBtn.getAttribute("aria-disabled") !== "true";
     },
     undefined,
-    { timeout: deadline - Date.now() },
+    { timeout: Math.max(1_000, timeout) },
   );
-  log.info("Video ready — send button enabled.");
 }
 
 /**
@@ -109,57 +123,6 @@ async function selectGeminiModel(page: Page, modelName: string): Promise<void> {
 }
 
 /**
- * Launch a browser context for Gemini.
- *
- * Always uses a persistent context backed by browser-data/gemini/.
- * Google authentication requires the full browser profile state (service workers,
- * IndexedDB, device fingerprint continuity) — cookies alone in a fresh context
- * are not sufficient and result in a logged-out page.
- *
- * Automation flags are suppressed so Google OAuth doesn't block sign-in.
- */
-export async function launchGeminiBrowser(
-  headless?: boolean,
-): Promise<BrowserContext> {
-  const isHeadless = headless ?? CONFIG.browser.headless;
-  const context = await chromium.launchPersistentContext(
-    CONFIG.paths.browserData.gemini,
-    {
-      channel: CONFIG.browser.channel,
-      headless: isHeadless,
-      viewport: { width: 1280, height: 900 },
-      args: ["--disable-blink-features=AutomationControlled"],
-      ignoreDefaultArgs: ["--enable-automation"],
-    },
-  );
-  return context;
-}
-
-/**
- * Auth mode: opens a visible browser for manual Google login.
- * The session is persisted automatically in the browser-data/gemini/ profile
- * directory — no separate export needed.
- */
-export async function authGemini(): Promise<void> {
-  log.info("Opening Gemini for manual Google login...");
-  const context = await launchGeminiBrowser(false);
-  const page = context.pages()[0] || (await context.newPage());
-
-  await page.goto(CONFIG.gemini.url, { timeout: 30_000 });
-
-  log.info("Complete Google login in the browser, then close the window.");
-  log.info("The session is saved automatically in the browser profile.");
-
-  // Wait for the browser to be closed
-  while (context.pages().length > 0) {
-    await new Promise<void>((r) => setTimeout(r, 2_000));
-  }
-
-  await context.close().catch(() => {});
-  log.info("Gemini auth browser closed. Session saved in persistent profile.");
-}
-
-/**
  * Register a persistent handler that auto-dismisses Gemini's video upload consent
  * dialog by clicking "Agree" whenever it appears. The handler fires for the lifetime
  * of the page, so it covers both the initial upload and any subsequent uploads on
@@ -191,8 +154,16 @@ async function registerConsentDialogHandler(page: Page): Promise<void> {
 }
 
 /**
- * Upload a video file to a new Gemini chat and return the page (ready for prompting).
- * Also returns the chat URL for future reference.
+ * Open a fresh Gemini chat on `page` and attach `filePath` to it.
+ *
+ * Operates on a caller-supplied page (from browserPool.withTab) rather than
+ * launching its own browser, which is what allows several of these to run
+ * concurrently in separate tabs of one context.
+ *
+ * Handles any file type, not just video: the pretty-notes path attaches a .md.
+ * `waitForProcessing` should be false for small text files — the send button
+ * enables almost immediately and the video-oriented progress phases just add
+ * pointless waiting.
  *
  * Real Gemini DOM flow (as of May 2026):
  *   1. Click button[aria-label="Upload & tools"]     → opens mat-menu
@@ -200,37 +171,43 @@ async function registerConsentDialogHandler(page: Page): Promise<void> {
  *   3. Handle filechooser event with Playwright      → file uploads
  *   4. Wait for upload chip / file name to appear in input area
  */
-export async function uploadVideoToGemini(
-  videoPath: string,
-): Promise<{ page: Page; context: BrowserContext; chatUrl: string }> {
-  const fileName = path.basename(videoPath);
-  log.info(`Uploading video to Gemini: ${fileName}`);
+export async function uploadFileToGemini(
+  page: Page,
+  filePath: string,
+  opts: { waitForProcessing?: boolean; ctx?: LogContext } = {},
+): Promise<{ chatUrl: string }> {
+  const { waitForProcessing = true, ctx } = opts;
+  const fileName = path.basename(filePath);
+  log.info(`Attaching to Gemini: ${fileName}`, ctx);
 
-  const context = await launchGeminiBrowser();
-  const page = context.pages()[0] || (await context.newPage());
+  // "load" not "networkidle" — Gemini has persistent background activity, so
+  // networkidle never fires.
+  await page.goto(CONFIG.gemini.url, { timeout: 60_000, waitUntil: "load" });
 
-  // Navigate to Gemini and start a new chat
-  // Use "load" not "networkidle" — Gemini has persistent background activity
-  await page.goto(CONFIG.gemini.url, {
-    timeout: 30_000,
-    waitUntil: "load",
-  });
-
-  // Wait for the input area to be fully ready
-  await page.waitForSelector('input-area-v2', { timeout: 15_000 });
+  // Checked before waiting on any Gemini selector: the bot-check page contains
+  // none of them, so without this a rate-limit reads as a 30s selector timeout.
+  assertNotRateLimited(page);
+  await page.waitForSelector("input-area-v2", { timeout: 30_000 });
 
   // Register consent dialog auto-dismissal before triggering any upload
   await registerConsentDialogHandler(page);
+
+  // Steps 1-3 drive Angular Material overlays (the model picker and the upload
+  // menu). These used to run under a global foreground mutex on the theory that
+  // CDK overlays only lay out in the visible tab; measurement showed every
+  // pooled tab reports itself focused and visible (Playwright focus emulation),
+  // and 3 concurrent tabs drove this menu successfully with no mutex. Running
+  // unserialised is what makes the tab pool actually parallel.
 
   // Select the desired model before uploading
   await selectGeminiModel(page, CONFIG.gemini.model);
 
   // Step 1: Open the upload file menu
-  // Gemini May 2026: button[aria-label="Upload & tools"]
   const uploadMenuBtn = page.locator('button[aria-label="Upload & tools"]');
-  await uploadMenuBtn.waitFor({ state: "visible", timeout: 15_000 });
-  await page.screenshot({ path: "temp/gemini-debug.png" });
-  log.info(`Gemini page URL before upload: ${page.url()}`);
+  await uploadMenuBtn.waitFor({ state: "visible", timeout: 30_000 });
+  if (CONFIG.browser.debugScreenshots) {
+    await page.screenshot({ path: debugScreenshotPath(`pre-upload-${fileName}`) }).catch(() => {});
+  }
   await page.waitForTimeout(500);
   await uploadMenuBtn.click();
 
@@ -240,63 +217,26 @@ export async function uploadVideoToGemini(
     .locator('[role="menuitem"]')
     .filter({ hasText: /^Upload files/i })
     .first();
-  await uploadFilesItem.waitFor({ state: "visible", timeout: 10_000 });
+  await uploadFilesItem.waitFor({ state: "visible", timeout: 30_000 });
 
   // Set up file chooser listener AFTER confirming the menu is open, then click
-  const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 15_000 });
+  const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 30_000 });
   await uploadFilesItem.click();
 
   // Step 3: Handle the file chooser
   const fileChooser = await fileChooserPromise;
-  await fileChooser.setFiles(videoPath);
+  await fileChooser.setFiles(filePath);
 
-  log.info("Video file selected, waiting for upload and processing to complete...");
+  log.info("File selected, waiting for upload to complete...", ctx);
 
-  // Step 4: Wait for Gemini to finish uploading AND processing the video.
-  await waitForVideoReady(page, CONFIG.gemini.uploadTimeout);
+  // Step 4: Wait for Gemini to finish uploading AND processing.
+  if (waitForProcessing) {
+    await waitForVideoReady(page, CONFIG.gemini.uploadTimeout, ctx);
+  } else {
+    await waitForSendEnabled(page, 120_000);
+  }
 
-  // Capture the chat URL
   const chatUrl = page.url();
-
-  log.info(`Video uploaded and processed. Chat URL: ${chatUrl}`);
-  return { page, context, chatUrl };
-}
-
-/**
- * Upload an additional video to an already-open Gemini chat page.
- * Used when a lecture video is split into multiple parts — call this after
- * the first part has already been uploaded via uploadVideoToGemini().
- */
-export async function uploadAdditionalVideoToChat(
-  page: Page,
-  videoPath: string,
-): Promise<void> {
-  const fileName = path.basename(videoPath);
-  log.info(`Uploading additional video to existing Gemini chat: ${fileName}`);
-
-  await page.waitForSelector("input-area-v2", { timeout: 15_000 });
-
-  // Ensure consent dialog is handled (handler is idempotent — safe to register again)
-  await registerConsentDialogHandler(page);
-
-  // Gemini May 2026: button[aria-label="Upload & tools"]
-  const uploadMenuBtn = page.locator('button[aria-label="Upload & tools"]');
-  await uploadMenuBtn.waitFor({ state: "visible", timeout: 15_000 });
-  await page.waitForTimeout(500);
-  await uploadMenuBtn.click();
-
-  const uploadFilesItem = page
-    .locator('[role="menuitem"]')
-    .filter({ hasText: /^Upload files/i })
-    .first();
-  await uploadFilesItem.waitFor({ state: "visible", timeout: 10_000 });
-
-  const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 15_000 });
-  await uploadFilesItem.click();
-  const fileChooser = await fileChooserPromise;
-  await fileChooser.setFiles(videoPath);
-
-  log.info("Part 2 file selected, waiting for upload and processing to complete...");
-  await waitForVideoReady(page, CONFIG.gemini.uploadTimeout);
-  log.info(`Additional video uploaded and processed: ${fileName}`);
+  log.info(`Attachment ready. Chat URL: ${chatUrl}`, ctx);
+  return { chatUrl };
 }

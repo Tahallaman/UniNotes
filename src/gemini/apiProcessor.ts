@@ -1,21 +1,20 @@
 import path from "node:path";
 import fs from "node:fs";
-import { GoogleGenAI } from "@google/genai";
-import { Storage } from "@google-cloud/storage";
 import { CONFIG } from "../../config.js";
-import { log } from "../utils/logger.js";
+import { log, type LogContext } from "../utils/logger.js";
+import type { PartRunner } from "../pipeline/partRunner.js";
 import {
-  buildPrompt,
-  buildPromptMiddlePart,
-  buildPromptFinalPart,
-} from "./prompts.js";
-import { parseGeminiResponse, type ParsedActions } from "../notes/parser.js";
-
-export interface ApiProcessResult {
-  markdown: string;
-  actions: ParsedActions | null;
-  chatUrl: string;
-}
+  getStorage,
+  resolveBucketName,
+  resolveBucketLocation,
+  vertexLimit,
+  gcsLimit,
+  RUN_ID,
+  classifyError,
+  backoffDelay,
+  sleep,
+} from "./vertexClient.js";
+import { generateText } from "./vertexGenerate.js";
 
 const MIME_BY_EXT: Record<string, string> = {
   ".mp4": "video/mp4",
@@ -25,235 +24,205 @@ const MIME_BY_EXT: Record<string, string> = {
   ".webm": "video/webm",
 };
 
-/** Request timeout for a single generateContent call (ms). */
-const GENERATE_TIMEOUT_MS = 30 * 60_000;
-
-function resolveProject(): string {
-  return process.env.GOOGLE_CLOUD_PROJECT || CONFIG.vertex.project;
-}
-
-function resolveLocation(): string {
-  return process.env.GOOGLE_CLOUD_LOCATION || CONFIG.vertex.location;
-}
-
-function resolveBucketName(): string {
-  return process.env.UNINOTES_GCS_BUCKET || CONFIG.vertex.gcsBucket;
-}
-
-function resolveBucketLocation(): string {
-  return process.env.UNINOTES_GCS_BUCKET_LOCATION || CONFIG.vertex.bucketLocation;
-}
-
-let cachedClient: GoogleGenAI | null = null;
-function getClient(): GoogleGenAI {
-  if (!cachedClient) {
-    cachedClient = new GoogleGenAI({
-      vertexai: true,
-      project: resolveProject(),
-      location: resolveLocation(),
+/**
+ * Ensure the GCS bucket exists.
+ *
+ * Memoises the PROMISE, not a boolean. A boolean flag lets every concurrent
+ * caller past the check before the first one finishes, and they all race into
+ * createBucket() — which 409s for all but one.
+ */
+let bucketPromise: Promise<string> | null = null;
+function ensureBucket(): Promise<string> {
+  if (!bucketPromise) {
+    bucketPromise = (async () => {
+      const bucketName = resolveBucketName();
+      const bucket = getStorage().bucket(bucketName);
+      const [exists] = await bucket.exists();
+      if (!exists) {
+        log.info(`Creating GCS bucket "${bucketName}" in ${resolveBucketLocation()}...`);
+        await getStorage().createBucket(bucketName, {
+          location: resolveBucketLocation(),
+          uniformBucketLevelAccess: true,
+        });
+        log.info(`Bucket "${bucketName}" created.`);
+      }
+      return bucketName;
+    })().catch((err) => {
+      // Don't cache a failure — a transient error would poison every later call.
+      bucketPromise = null;
+      throw err;
     });
   }
-  return cachedClient;
+  return bucketPromise;
 }
 
-let cachedStorage: Storage | null = null;
-function getStorage(): Storage {
-  if (!cachedStorage) {
-    cachedStorage = new Storage({ projectId: resolveProject() });
-  }
-  return cachedStorage;
-}
-
-let bucketEnsured = false;
-async function ensureBucket(): Promise<string> {
-  const bucketName = resolveBucketName();
-  if (bucketEnsured) return bucketName;
-
-  const storage = getStorage();
-  const bucket = storage.bucket(bucketName);
-  const [exists] = await bucket.exists();
-  if (!exists) {
-    log.info(`Creating GCS bucket "${bucketName}" in ${resolveBucketLocation()}...`);
-    await storage.createBucket(bucketName, {
-      location: resolveBucketLocation(),
-      uniformBucketLevelAccess: true,
-    });
-    log.info(`Bucket "${bucketName}" created.`);
-  }
-  bucketEnsured = true;
-  return bucketName;
+interface StagedUpload {
+  gcsUri: string;
+  mimeType: string;
+  cleanup: () => Promise<void>;
 }
 
 /**
- * Upload a video chunk to GCS under uploads/<timestamp>/part-N.mp4 and return
- * its gs:// URI plus a cleanup function.
+ * Upload a video chunk to GCS and return its gs:// URI plus a cleanup function.
+ *
+ * The object key is namespaced by RUN_ID *and* the lecture key. The previous
+ * scheme keyed only on Date.now(), so two lectures starting in the same
+ * millisecond wrote to the same path and clobbered each other.
  */
 async function uploadChunkToGcs(
   videoPath: string,
-  uploadTimestamp: string,
+  lectureKey: string,
   partNum: number,
-): Promise<{ gcsUri: string; mimeType: string; cleanup: () => Promise<void> }> {
+  ctx: LogContext,
+): Promise<StagedUpload> {
   const bucketName = await ensureBucket();
   const ext = path.extname(videoPath).toLowerCase();
   const mimeType = MIME_BY_EXT[ext] || "video/mp4";
-  const destination = `uploads/${uploadTimestamp}/part-${partNum}${ext || ".mp4"}`;
-
-  log.info(`Uploading ${path.basename(videoPath)} to gs://${bucketName}/${destination}...`);
-  const storage = getStorage();
-  const bucket = storage.bucket(bucketName);
-  await bucket.upload(videoPath, { destination });
-  log.info(`Upload to GCS complete: gs://${bucketName}/${destination}`);
-
+  const destination = `uploads/${RUN_ID}/${lectureKey}/part-${partNum}${ext || ".mp4"}`;
   const gcsUri = `gs://${bucketName}/${destination}`;
+  const bucket = getStorage().bucket(bucketName);
+
+  // Upload under the GCS limiter only. It is released before the caller takes a
+  // Vertex slot, so the two global caps are never held simultaneously.
+  await gcsLimit(async () => {
+    log.info(`Uploading ${path.basename(videoPath)} → ${gcsUri}`, ctx);
+    await bucket.upload(videoPath, { destination });
+    log.info("Upload to GCS complete.", ctx);
+  });
+
   const cleanup = async () => {
     if (!CONFIG.vertex.cleanupUploads) return;
     try {
       await bucket.file(destination).delete();
-      log.info(`Deleted GCS object: ${gcsUri}`);
+      log.debug(`Deleted GCS object: ${gcsUri}`, ctx);
     } catch (err) {
-      log.warn(`Could not delete GCS object ${gcsUri}: ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(
+        `Could not delete GCS object ${gcsUri}: ${err instanceof Error ? err.message : String(err)}`,
+        ctx,
+      );
     }
   };
 
   return { gcsUri, mimeType, cleanup };
 }
 
-/**
- * Call Gemini via Vertex AI with a video (as a GCS file reference) and a text prompt.
- * Returns the raw response text.
- */
-async function generateFromVideo(gcsUri: string, mimeType: string, prompt: string): Promise<string> {
-  const client = getClient();
-  const response = await client.models.generateContent({
-    model: CONFIG.vertex.model,
-    contents: [
-      { fileData: { fileUri: gcsUri, mimeType } },
-      { text: prompt },
-    ],
-    config: {
-      httpOptions: { timeout: GENERATE_TIMEOUT_MS },
-    },
-  });
+/** Upload with its own retry budget, so a flaky upload doesn't consume generation attempts. */
+async function uploadWithRetry(
+  videoPath: string,
+  lectureKey: string,
+  partNum: number,
+  ctx: LogContext,
+): Promise<StagedUpload> {
+  const maxRetries = CONFIG.retry.maxRetries;
+  let lastErr: unknown;
 
-  return response.text ?? "";
-}
-
-/**
- * Process one or more video part files through Vertex AI Gemini, returning the same
- * shape main.ts's browser-path assembly produces: combined markdown, actions parsed
- * from the final part, and an (empty) chatUrl — there is no web chat on the API path.
- *
- * Multi-part semantics mirror main.ts: each part is processed independently (its own
- * upload), non-final parts use buildPromptMiddlePart, the final part uses
- * buildPromptFinalPart and supplies the actions; parts are joined with "\n\n---\n\n".
- * Single-part uses buildPrompt.
- */
-export async function processLectureViaApi(
-  lectureTitle: string,
-  courseCode: string,
-  videoPartPaths: string[],
-): Promise<ApiProcessResult> {
-  if (videoPartPaths.length === 0) {
-    throw new Error("processLectureViaApi called with no video parts");
-  }
-
-  const uploadTimestamp = Date.now().toString();
-  const isMultiPart = videoPartPaths.length > 1;
-  const MAX_RETRIES = CONFIG.retry.maxRetries;
-
-  let actions: ParsedActions | null = null;
-
-  if (isMultiPart) {
-    const markdownParts: string[] = [];
-
-    for (let i = 0; i < videoPartPaths.length; i++) {
-      const isLast = i === videoPartPaths.length - 1;
-      const prompt = isLast
-        ? buildPromptFinalPart(lectureTitle, courseCode, i + 1, videoPartPaths.length)
-        : buildPromptMiddlePart(lectureTitle, courseCode, i + 1, videoPartPaths.length);
-
-      const partMarkdown = await processOnePart({
-        videoPath: videoPartPaths[i],
-        prompt,
-        partLabel: `Part ${i + 1}/${videoPartPaths.length}`,
-        uploadTimestamp,
-        partNum: i + 1,
-        maxRetries: MAX_RETRIES,
-        onFinalActions: isLast
-          ? (parsed) => {
-              actions = parsed.actions;
-            }
-          : undefined,
-      });
-
-      markdownParts.push(partMarkdown);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await uploadChunkToGcs(videoPath, lectureKey, partNum, ctx);
+    } catch (err) {
+      lastErr = err;
+      const { retryable, rateLimited, reason } = classifyError(err);
+      if (!retryable || attempt === maxRetries) break;
+      const wait = backoffDelay(attempt, rateLimited);
+      log.warn(`GCS upload failed (${reason}) — retrying in ${wait}ms`, ctx);
+      await sleep(wait);
     }
-
-    return {
-      markdown: markdownParts.join("\n\n---\n\n"),
-      actions,
-      chatUrl: "",
-    };
   }
 
-  // Single part
-  const prompt = buildPrompt(lectureTitle, courseCode);
-  const markdown = await processOnePart({
-    videoPath: videoPartPaths[0],
-    prompt,
-    partLabel: "Single-part",
-    uploadTimestamp,
-    partNum: 1,
-    maxRetries: MAX_RETRIES,
-    onFinalActions: (parsed) => {
-      actions = parsed.actions;
-    },
-  });
-
-  return { markdown, actions, chatUrl: "" };
+  throw lastErr instanceof Error ? lastErr : new Error("GCS upload failed");
 }
 
+/**
+ * Vertex AI implementation of the PartRunner contract.
+ *
+ * Ordering, checkpointing and timestamp rebasing live in pipeline/partRunner.ts;
+ * this only knows how to turn one video part into one raw response.
+ */
+export function createApiRunner(lectureKey: string): PartRunner {
+  const key = sanitiseKey(lectureKey);
+  return {
+    name: "api",
+    async runPart({ videoPath, prompt, partNum, ctx }) {
+      const raw = await processOnePart({ videoPath, prompt, lectureKey: key, partNum, ctx });
+      // No web conversation exists on the API path.
+      return { raw, chatUrl: "" };
+    },
+  };
+}
+
+/** Returns the RAW response text; the caller parses it. */
 async function processOnePart(opts: {
   videoPath: string;
   prompt: string;
-  partLabel: string;
-  uploadTimestamp: string;
+  lectureKey: string;
   partNum: number;
-  maxRetries: number;
-  onFinalActions?: (parsed: ReturnType<typeof parseGeminiResponse>) => void;
+  ctx: LogContext;
 }): Promise<string> {
-  const { videoPath, prompt, partLabel, uploadTimestamp, partNum, maxRetries, onFinalActions } = opts;
+  const { videoPath, prompt, lectureKey, partNum, ctx } = opts;
 
   if (!fs.existsSync(videoPath)) {
     throw new Error(`Video part not found: ${videoPath}`);
   }
 
+  // Upload ONCE, outside the generation retry loop. Previously the upload sat
+  // inside the loop, so a single 429 re-uploaded the entire video chunk.
+  const staged = await uploadWithRetry(videoPath, lectureKey, partNum, ctx);
+  const maxRetries = CONFIG.retry.maxRetries;
   let lastErr: unknown;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const { gcsUri, mimeType, cleanup } = await uploadChunkToGcs(videoPath, uploadTimestamp, partNum);
-    try {
-      log.info(`${partLabel}: requesting Gemini (Vertex AI, ${CONFIG.vertex.model})...`);
-      const response = await generateFromVideo(gcsUri, mimeType, prompt);
-      log.info(`${partLabel} response (${response.length} chars): ${response.slice(0, 200)}`);
+  try {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await vertexLimit(() =>
+          generateText({
+            model: CONFIG.vertex.model,
+            parts: [
+              { fileData: { fileUri: staged.gcsUri, mimeType: staged.mimeType } },
+              { text: prompt },
+            ],
+            maxOutputTokens: CONFIG.vertex.generation.notes.maxOutputTokens,
+            thinkingLevel: CONFIG.vertex.generation.notes.thinkingLevel,
+            ctx,
+          }),
+        );
 
-      if (response.length < 200 && !response.includes("#")) {
-        log.warn(`${partLabel} short response, attempt ${attempt + 1}/${maxRetries + 1}`);
-        lastErr = new Error(`Short response on ${partLabel}`);
-        continue;
+        log.info(`Response: ${response.length} chars`, ctx);
+
+        if (response.length < 200 && !response.includes("#")) {
+          lastErr = new Error(`Short response (${response.length} chars)`);
+          log.warn(`Short response, attempt ${attempt + 1}/${maxRetries + 1}`, ctx);
+          if (attempt < maxRetries) await sleep(backoffDelay(attempt, false));
+          continue;
+        }
+
+        return response;
+      } catch (err) {
+        lastErr = err;
+        const { retryable, rateLimited, reason } = classifyError(err);
+        if (!retryable) {
+          log.error(`Not retryable — ${reason}`, ctx);
+          break;
+        }
+        if (attempt === maxRetries) break;
+        const wait = backoffDelay(attempt, rateLimited);
+        log.warn(`Attempt ${attempt + 1}/${maxRetries + 1} failed (${reason}) — retrying in ${wait}ms`, ctx);
+        await sleep(wait);
       }
-
-      const parsed = parseGeminiResponse(response);
-      onFinalActions?.(parsed);
-      lastErr = undefined;
-      return parsed.markdown;
-    } catch (err) {
-      log.warn(`${partLabel} attempt ${attempt + 1}/${maxRetries + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
-      lastErr = err;
-    } finally {
-      await cleanup();
     }
+  } finally {
+    await staged.cleanup();
   }
 
-  throw lastErr instanceof Error ? lastErr : new Error(`${partLabel} failed after retries`);
+  throw lastErr instanceof Error ? lastErr : new Error("Vertex generation failed after retries");
+}
+
+/** Make an arbitrary lecture identifier safe for a GCS object path. */
+function sanitiseKey(value: string): string {
+  const cleaned = value
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return cleaned || "lecture";
 }

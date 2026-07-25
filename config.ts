@@ -1,11 +1,55 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyUserSettings } from "./src/settings/overlay.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const CONFIG = {
+/**
+ * The defaults, in reviewable source with the reasoning attached.
+ *
+ * Exported separately from CONFIG because the control panel needs to answer
+ * "is this value a default or an override?" and "what will the next run use?".
+ * Both are unanswerable from the merged object alone: once an override is folded
+ * in, the original is gone, so a setting returned to its default would look like
+ * a change forever.
+ */
+export const DEFAULTS = {
   /** Root directory of the project */
   rootDir: __dirname,
+
+  /**
+   * Which backend handles each stage.
+   *   "browser" — drive gemini.google.com with Playwright (uses your logged-in session, free)
+   *   "api"     — call Gemini on Vertex AI via gcloud ADC (billed, parallelises far better)
+   *
+   * CLI flags override these: --uploader=api|browser (notes), --pretty=api|browser.
+   */
+  providers: {
+    /** video → lecture.raw.md */
+    notes: "browser" as "browser" | "api",
+    /** lecture.raw.md → lecture.pretty.md */
+    pretty: "api" as "browser" | "api",
+  },
+
+  /**
+   * Concurrency limits. Set every value to 1 to reproduce the original
+   * fully-sequential behaviour — the first thing to try when debugging.
+   *
+   * `lectures` and `parts` multiply, so the global caps below are what actually
+   * protect Vertex quota and your upstream bandwidth.
+   */
+  concurrency: {
+    /** Lectures processed simultaneously. */
+    lectures: 3,
+    /** Parts of a single lecture processed simultaneously. */
+    parts: 4,
+    /** Global cap on in-flight generateContent calls (across all lectures). */
+    vertexInFlight: 8,
+    /** Global cap on simultaneous GCS uploads — bounded by your upstream bandwidth. */
+    gcsUploads: 3,
+    /** Global cap on simultaneous Gemini browser tabs. */
+    browserTabs: 3,
+  },
 
   /** Panopto settings */
   panopto: {
@@ -29,7 +73,7 @@ export const CONFIG = {
   gemini: {
     url: "https://gemini.google.com/app",
     /** Model to select when opening a new Gemini chat (as it appears in the model picker) */
-    model: "3.5 Flash",
+    model: "3.6 Flash",
     /** How often to poll for response completion (ms) */
     pollInterval: 5_000,
     /** Number of consecutive unchanged polls before considering response complete */
@@ -67,7 +111,35 @@ export const CONFIG = {
   /** Browser launch options */
   browser: {
     channel: "msedge" as const,
-    headless: false,
+    /**
+     * Google blocks *sign-in* from headless browsers, but browser-data/gemini is
+     * already authenticated, so headless may work for normal runs. Verify with
+     * `npx tsx scripts/probe-browser.ts` before switching this on.
+     */
+    headless: false as boolean,
+    /**
+     * How the (headed) window is presented. Ignored when headless.
+     *   "normal"    — visible window, as before
+     *   "offscreen" — real headed window parked outside the visible desktop
+     *   "hidden"    — real headed window hidden via Win32 ShowWindow(SW_HIDE)
+     *
+     * "offscreen"/"hidden" keep the browser genuinely headed (so Google's
+     * fingerprinting is unaffected) while keeping it out of your way.
+     */
+    windowMode: "offscreen" as "normal" | "offscreen" | "hidden",
+    /** Save per-tab screenshots to temp/ when a browser step fails. */
+    debugScreenshots: false as boolean,
+    /**
+     * Minimum gap (ms) between starting one Gemini tab and the next, plus up to
+     * 40% jitter.
+     *
+     * Google served its "unusual traffic" bot check during testing after bursts
+     * of simultaneous conversations, which locks the profile out of the browser
+     * path entirely until it clears. Staggering starts makes the traffic pattern
+     * much less bursty at almost no throughput cost, since the long
+     * upload/generation waits still overlap. Set to 0 to disable.
+     */
+    tabStaggerMs: 2_000,
   },
 
   /** Retry defaults */
@@ -87,10 +159,33 @@ export const CONFIG = {
     /** Google Cloud project ID. Override with env GOOGLE_CLOUD_PROJECT. */
     project: "your-gcp-project",
     /** Vertex endpoint region. Override with env GOOGLE_CLOUD_LOCATION.
-     * NOTE: gemini-3.5-flash is only served on "global" (returns 404 in us-central1). */
+     * NOTE: the 3.x Flash models are only served on "global" (404 in us-central1).
+     * Verified for gemini-3.6-flash via scripts/probe-vertex.ts. */
     location: "global",
-    /** Model used for generateContent calls on the API path. */
-    model: "gemini-3.5-flash",
+    /** Model used for video → notes on the API path. */
+    model: "gemini-3.6-flash",
+
+    /**
+     * Gemini 3.x Flash thinks by default, and thinking tokens are charged against
+     * maxOutputTokens. If thinking exhausts the budget the API returns
+     * finishReason=MAX_TOKENS with an EMPTY string — not a partial answer — so
+     * these headrooms matter more than they look.
+     */
+    generation: {
+      /** Video → notes. Thinking left on; comprehension benefits from it. */
+      notes: {
+        maxOutputTokens: 65_536,
+        /** undefined = model default. Lower levels trim latency at some quality cost. */
+        thinkingLevel: undefined as "minimal" | "low" | "medium" | "high" | undefined,
+      },
+      /** Raw → pretty. Mechanical reformatting, so thinking is disabled:
+       *  faster, cheaper, and the whole token budget goes to actual markdown. */
+      pretty: {
+        model: "gemini-3.6-flash",
+        maxOutputTokens: 65_536,
+        thinkingBudget: 0,
+      },
+    },
     /** GCS bucket video chunks are uploaded to before calling generateContent.
      * Override with env UNINOTES_GCS_BUCKET. */
     gcsBucket: "uninotes-videos-your-gcp-project",
@@ -98,7 +193,16 @@ export const CONFIG = {
      * from `location` because Vertex uses "global" but GCS rejects it.
      * Override with env UNINOTES_GCS_BUCKET_LOCATION. */
     bucketLocation: "us-central1",
-    /** Delete uploaded GCS objects after each part is processed (best-effort). */
-    cleanupUploads: true,
+    /** Delete uploaded GCS objects after each part is processed (best-effort).
+     * Widened from the literal because the GUI can override it — left as `true`,
+     * TypeScript would treat the "keep the chunks" branch as dead code. */
+    cleanupUploads: true as boolean,
   },
 } as const;
+
+/**
+ * What this process actually runs with: the defaults above with settings.json
+ * merged over the top. Read once at import, so a running process keeps a stable
+ * view — each pipeline job is its own process and picks up changes on start.
+ */
+export const CONFIG = applyUserSettings(DEFAULTS);

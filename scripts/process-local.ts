@@ -2,9 +2,9 @@
  * Process manually downloaded lecture videos through the Gemini pipeline.
  *
  * Convention: drop video files in  Incoming/<CourseCode>/<LectureTitle>.mp4
- * Usage: npx tsx scripts/process-local.ts
+ * Usage: npx tsx scripts/process-local.ts [--retry] [--uploader=api|browser] [--pretty=api|browser]
  *
- * Each video is processed sequentially, then moved to:
+ * Videos are processed concurrently (CONFIG.concurrency.lectures), then moved to:
  *   Lectures/<CourseCode>/<LectureTitle>/lecture.<ext>
  */
 
@@ -12,39 +12,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { CONFIG } from "../config.js";
-import { log } from "../src/utils/logger.js";
 import { ensureDirectories } from "../src/utils/paths.js";
+import { acquireLock, releaseLock } from "../src/utils/lock.js";
 import { getDb, closeDb } from "../src/db/schema.js";
 import {
   insertLocalLecture,
-  updateStatus,
   setError,
   resetStaleStatuses,
   type LocalLecture,
 } from "../src/db/tracker.js";
-import { uploadVideoToGemini } from "../src/gemini/uploader.js";
-import { submitPromptAndWaitForResponse } from "../src/gemini/prompter.js";
-import {
-  buildPrompt,
-  buildPromptMiddlePart,
-  buildPromptFinalPart,
-} from "../src/gemini/prompts.js";
-import { processLectureViaApi } from "../src/gemini/apiProcessor.js";
-import { parseGeminiResponse } from "../src/notes/parser.js";
-import { splitVideoIfNeeded } from "../src/utils/videoSplitter.js";
-import {
-  writeNotes,
-  writePrettyNotes,
-  moveLectureVideo,
-} from "../src/notes/writer.js";
-import { prettifyNotes } from "../src/notes/prettifier.js";
-import { appendTodoItems } from "../src/todo/manager.js";
-import { syncToWorkspace } from "../src/utils/workspaceSync.js";
-import { resolveUploaderMode } from "../src/utils/uploaderMode.js";
+import { processLecture } from "../src/pipeline/processLecture.js";
+import { backfillPretty } from "../src/pipeline/prettyBackfill.js";
+import { closeGeminiBrowser } from "../src/gemini/browserPool.js";
+import { mapWithLimitSettled } from "../src/utils/limit.js";
+import { resolveUploaderMode, resolvePrettyMode } from "../src/utils/uploaderMode.js";
 
 const cliArgs = process.argv.slice(2);
 const retryErrors = cliArgs.includes("--retry");
-const uploaderMode = resolveUploaderMode(cliArgs);
+const providers = {
+  notes: resolveUploaderMode(cliArgs),
+  pretty: resolvePrettyMode(cliArgs),
+};
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".webm"]);
 
@@ -95,49 +83,7 @@ for (const v of pending) {
 }
 console.log();
 
-// ── Lock helpers (mirrors main.ts) ───────────────────────────────────────────
-
-function acquireLock(): boolean {
-  try {
-    const fd = fs.openSync(
-      CONFIG.paths.lockFile,
-      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-    );
-    fs.writeSync(fd, `${process.pid}`);
-    fs.closeSync(fd);
-    return true;
-  } catch {
-    try {
-      const pid = parseInt(fs.readFileSync(CONFIG.paths.lockFile, "utf-8"), 10);
-      try {
-        process.kill(pid, 0);
-        return false;
-      } catch {
-        log.warn(`Removing stale lock (PID ${pid} no longer running)`);
-        fs.unlinkSync(CONFIG.paths.lockFile);
-        return acquireLock();
-      }
-    } catch {
-      return false;
-    }
-  }
-}
-
-function releaseLock(): void {
-  try {
-    fs.unlinkSync(CONFIG.paths.lockFile);
-  } catch { /* already gone */ }
-}
-
-/** Remove split part files (skips the original video). */
-function cleanupParts(parts: string[], originalPath: string): void {
-  for (const part of parts) {
-    if (part === originalPath) continue;
-    try { fs.unlinkSync(part); } catch { /* already gone */ }
-  }
-}
-
-// ── Main processing loop ──────────────────────────────────────────────────────
+// ── Main processing ───────────────────────────────────────────────────────────
 
 ensureDirectories();
 
@@ -149,173 +95,75 @@ if (!acquireLock()) {
 getDb();
 resetStaleStatuses();
 
-let done = 0;
-let errors = 0;
-
-for (const entry of pending) {
+// Insert first, serially, so the "already in DB" skip is decided before any
+// concurrent work starts.
+const queued = pending.filter((entry) => {
   const localLecture: LocalLecture = {
     id: entry.id,
     title: entry.title,
     courseCode: entry.courseCode,
     videoPath: entry.videoPath,
   };
+  if (insertLocalLecture(localLecture, retryErrors)) return true;
+  console.log(`[SKIP]  ${entry.courseCode}/${entry.title} (already in DB — use --retry to re-run errors)`);
+  return false;
+});
 
-  const inserted = insertLocalLecture(localLecture, retryErrors);
-  if (!inserted) {
-    console.log(`[SKIP]  ${entry.courseCode}/${entry.title} (already in DB — use --retry to re-run errors)`);
-    continue;
-  }
+console.log(
+  `\nProcessing ${queued.length} video(s) — notes via ${providers.notes}, pretty via ${providers.pretty}, ` +
+    `up to ${CONFIG.concurrency.lectures} at a time.\n`,
+);
 
-  console.log(`[START] ${entry.courseCode}/${entry.title} (uploader mode: ${uploaderMode})`);
+let done = 0;
+let errors = 0;
 
-  let videoParts: string[] = [];
-  try {
-    updateStatus(entry.id, "processing");
-
-    // Split video if longer than 45 minutes — parts go to temp/ so they
-    // don't get picked up as new lectures if the run fails midway.
-    videoParts = await splitVideoIfNeeded(entry.videoPath, CONFIG.paths.temp);
-    const isMultiPart = videoParts.length > 1;
-
-    let finalChatUrl = "";
-    let combinedMarkdown = "";
-    let actions = null;
-
-    const MAX_RETRIES = 2;
-
-    if (uploaderMode === "api") {
-      const result = await processLectureViaApi(entry.title, entry.courseCode, videoParts);
-      combinedMarkdown = result.markdown;
-      actions = result.actions;
-      finalChatUrl = result.chatUrl;
-    } else if (isMultiPart) {
-      const markdownParts: string[] = [];
-
-      for (let i = 0; i < videoParts.length; i++) {
-        const isLast = i === videoParts.length - 1;
-        const prompt = isLast
-          ? buildPromptFinalPart(entry.title, entry.courseCode, i + 1, videoParts.length)
-          : buildPromptMiddlePart(entry.title, entry.courseCode, i + 1, videoParts.length);
-
-        let partResponse = "";
-        let lastErr: unknown;
-
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-          const { page, context } = await uploadVideoToGemini(videoParts[i]);
-          try {
-            const { response, chatUrl } = await submitPromptAndWaitForResponse(page, prompt);
-            log.info(`Part ${i + 1}/${videoParts.length} (${response.length} chars)`);
-
-            if (response.length < 200 && !response.includes("#")) {
-              log.warn(`Part ${i + 1} short response, attempt ${attempt + 1}/${MAX_RETRIES + 1}`);
-              lastErr = new Error(`Short response on part ${i + 1}`);
-              continue;
-            }
-
-            partResponse = response;
-            if (isLast) finalChatUrl = chatUrl;
-            lastErr = undefined;
-            break;
-          } catch (err) {
-            log.warn(`Part ${i + 1} attempt ${attempt + 1}/${MAX_RETRIES + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
-            lastErr = err;
-          } finally {
-            await context.close();
-          }
-        }
-
-        if (lastErr !== undefined) throw lastErr;
-
-        const parsed = parseGeminiResponse(partResponse);
-        markdownParts.push(parsed.markdown);
-        if (isLast) actions = parsed.actions;
-      }
-
-      combinedMarkdown = markdownParts.join("\n\n---\n\n");
-    } else {
-      let lastErr: unknown;
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const { page, context } = await uploadVideoToGemini(videoParts[0]);
-        try {
-          const prompt = buildPrompt(entry.title, entry.courseCode);
-          const { response, chatUrl } = await submitPromptAndWaitForResponse(page, prompt);
-
-          if (response.length < 200 && !response.includes("#")) {
-            log.warn(`Single-part short response, attempt ${attempt + 1}/${MAX_RETRIES + 1}`);
-            lastErr = new Error("Short response");
-            continue;
-          }
-
-          const parsed = parseGeminiResponse(response);
-          finalChatUrl = chatUrl;
-          combinedMarkdown = parsed.markdown;
-          actions = parsed.actions;
-          lastErr = undefined;
-          break;
-        } catch (err) {
-          log.warn(`Single-part attempt ${attempt + 1}/${MAX_RETRIES + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
-          lastErr = err;
-        } finally {
-          await context.close();
-        }
-      }
-      if (lastErr !== undefined) throw lastErr;
-    }
-
-    updateStatus(entry.id, "processed", { gemini_chat_url: finalChatUrl });
-
-    // Write notes
-    const lectureDir = writeNotes({
-      title: entry.title,
-      courseCode: entry.courseCode,
-      geminiChatUrl: finalChatUrl,
-      markdown: combinedMarkdown,
-      actions,
-    });
-
-    // Pretty notes (non-fatal)
-    try {
-      const rawFilePath = path.join(lectureDir, "lecture.raw.md");
-      const prettyMarkdown = await prettifyNotes(rawFilePath);
-      writePrettyNotes(lectureDir, prettyMarkdown);
-
-      // Sync pretty notes to University workspace (non-fatal)
-      try {
-        syncToWorkspace(entry.courseCode, path.join(lectureDir, "lecture.pretty.md"));
-      } catch (syncErr) {
-        log.warn(`Workspace sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
-      }
-    } catch (err) {
-      log.warn(`Pretty notes failed (raw notes preserved): ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    appendTodoItems({
-      title: entry.title,
-      courseCode: entry.courseCode,
-      panoptoUrl: `local://${entry.title}`,
-      actions,
-    });
-
-    // Move the video into the lecture folder
-    moveLectureVideo(entry.videoPath, lectureDir);
-
-    // Clean up temp split parts (if any)
-    cleanupParts(videoParts, entry.videoPath);
-
-    updateStatus(entry.id, "complete", { notes_file: lectureDir });
+try {
+  const outcomes = await mapWithLimitSettled(queued, CONFIG.concurrency.lectures, async (entry) => {
+    console.log(`[START] ${entry.courseCode}/${entry.title}`);
+    const result = await processLecture(
+      {
+        id: entry.id,
+        title: entry.title,
+        courseCode: entry.courseCode,
+        videoPath: entry.videoPath,
+        panoptoUrl: `local://${entry.title}`,
+        // Parts go to temp/ so a mid-run crash can't leave them looking like
+        // new Incoming lectures on the next run.
+        partsDir: CONFIG.paths.temp,
+        onComplete: "move",
+      },
+      providers,
+    );
     console.log(`[DONE]  ${entry.courseCode}/${entry.title}`);
-    done++;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    setError(entry.id, msg);
-    // Clean up temp split parts so they don't get picked up as new lectures
-    cleanupParts(videoParts, entry.videoPath);
-    console.error(`[ERROR] ${entry.courseCode}/${entry.title}: ${msg}`);
+    return result;
+  });
+
+  outcomes.forEach((outcome, i) => {
+    if (outcome.ok) {
+      done++;
+      return;
+    }
     errors++;
+    const msg = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+    setError(queued[i].id, msg);
+    console.error(`[ERROR] ${queued[i].courseCode}/${queued[i].title}: ${msg}`);
+  });
+
+  // Retry any pretty notes that failed here or on an earlier run.
+  const backfill = await backfillPretty({
+    provider: providers.pretty,
+    onProgress: (label, phase, detail) => {
+      if (phase === "done") console.log(`[PRETTY] ${label} (${detail})`);
+      if (phase === "error") console.error(`[PRETTY] ${label} failed: ${detail}`);
+    },
+  });
+  if (backfill.total > 0) {
+    console.log(`\nPretty backfill: ${backfill.done} generated, ${backfill.errors} still failing`);
   }
+} finally {
+  await closeGeminiBrowser();
+  releaseLock();
+  closeDb();
 }
 
-releaseLock();
-closeDb();
-
-console.log(`\nComplete: ${done} processed, ${errors} errors, ${pending.length} total`);
+console.log(`\nComplete: ${done} processed, ${errors} errors, ${queued.length} queued, ${pending.length} found`);

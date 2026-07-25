@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UniNotes</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231a1d1b'/><rect x='8' y='9' width='16' height='2.5' rx='1.25' fill='%23fafaf9'/><rect x='8' y='15' width='16' height='2.5' rx='1.25' fill='%23fafaf9'/><rect x='8' y='21' width='9' height='2.5' rx='1.25' fill='%233f7a5a'/></svg>">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <h1 class="wordmark">UniNotes</h1>
+    <nav class="nav" role="tablist">
+      <button class="nav-item current" role="tab" data-tab="run">Run</button>
+      <button class="nav-item" role="tab" data-tab="library">Library</button>
+      <button class="nav-item" role="tab" data-tab="settings">Settings</button>
+      <button class="nav-item" role="tab" data-tab="schedule">Schedule</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ── Run ─────────────────────────────────────────────────────────────── -->
+  <section id="panel-run" class="panel current">
+
+    <!-- State: one line, always true, never decorative. -->
+    <div class="state">
+      <span id="state-dot" class="dot dot-ready"></span>
+      <span id="state-text" class="state-text">Ready</span>
+      <span id="state-meta" class="state-meta"></span>
+    </div>
+
+    <!-- Only rendered when something is actually wrong. -->
+    <div id="alerts" class="alerts"></div>
+
+    <button id="go" class="go">
+      <span class="go-label">Run the whole pipeline</span>
+      <span class="go-sub">Every step below, in order, skipping whatever is already done</span>
+    </button>
+
+    <section class="block">
+      <h2 class="block-title">Step by step</h2>
+      <ul id="stages" class="waiting"></ul>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">Other actions</h2>
+      <ul id="extras" class="waiting"></ul>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">Setup &amp; checks</h2>
+      <ul id="setup" class="waiting"></ul>
+    </section>
+
+    <section class="block">
+      <div class="block-head">
+        <h2 class="block-title">Output</h2>
+        <div class="block-tools">
+          <label class="check"><input type="checkbox" id="autoscroll" checked> follow</label>
+          <button id="btn-cancel" class="link-btn danger" disabled>Stop</button>
+          <button id="btn-clear" class="link-btn">Clear</button>
+        </div>
+      </div>
+      <div id="console" class="console"><p class="console-idle">Output appears here while something is running.</p></div>
+    </section>
+  </section>
+
+  <!-- ── Library ─────────────────────────────────────────────────────────── -->
+  <section id="panel-library" class="panel">
+    <div class="filters">
+      <input type="search" id="lib-search" class="field field-grow" placeholder="Search lectures" autocomplete="off">
+      <select id="lib-course" class="field"><option value="">All courses</option></select>
+      <select id="lib-status" class="field"><option value="">Any status</option></select>
+      <label class="check"><input type="checkbox" id="lib-missing"> needs pretty notes</label>
+    </div>
+
+    <p id="lib-summary" class="counts"></p>
+
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="c-check"><input type="checkbox" id="lib-all" title="Select all shown"></th>
+          <th>Lecture</th>
+          <th class="c-course">Course</th>
+          <th class="c-status">Status</th>
+          <th class="c-files">Notes</th>
+          <th class="c-when">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="lib-body"></tbody>
+    </table>
+    <p id="lib-empty" class="nothing" hidden>Nothing matches those filters.</p>
+
+    <div id="lib-actions" class="selected-bar" hidden>
+      <span id="lib-count" class="selected-count"></span>
+      <div class="selected-actions">
+        <button class="btn btn-solid" data-sel="process">Process</button>
+        <button class="btn" data-sel="prettify">Prettify</button>
+        <button class="btn" data-sel="reset">Retry</button>
+        <button class="btn" data-sel="ignore">Ignore</button>
+        <button class="btn btn-danger" data-sel="forget">Forget</button>
+        <button class="link-btn" data-sel="clear">Clear selection</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Settings ────────────────────────────────────────────────────────── -->
+  <section id="panel-settings" class="panel">
+    <p class="lede">
+      Saved to <code>settings.json</code> and merged over the defaults in <code>config.ts</code>.
+      Changes apply to the next run.
+    </p>
+    <div id="settings-form"></div>
+
+    <section class="block">
+      <h2 class="block-title">Maintenance</h2>
+      <ul id="maintenance" class="waiting"></ul>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">Reset</h2>
+      <ul class="waiting">
+        <li class="row">
+          <div class="row-main">
+            <span class="row-text">Return every setting to the defaults in <code>config.ts</code></span>
+            <span class="row-note">Deletes <code>settings.json</code>.</span>
+          </div>
+          <button id="settings-reset" class="btn btn-danger">Reset all</button>
+        </li>
+      </ul>
+    </section>
+
+    <div id="settings-bar" class="commit-bar" hidden>
+      <span id="settings-changed" class="commit-summary"></span>
+      <div class="commit-actions">
+        <button id="settings-revert" class="link-btn">Discard</button>
+        <button id="settings-save" class="btn btn-solid">Save</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Schedule ────────────────────────────────────────────────────────── -->
+  <section id="panel-schedule" class="panel">
+    <p class="lede">
+      Unattended runs, through Windows Task Scheduler. Each runs the same command as the
+      buttons here and appends to <code>logs/scheduled.log</code>.
+    </p>
+
+    <ul id="sched-list" class="waiting"></ul>
+
+    <section class="block">
+      <h2 class="block-title">Add a run</h2>
+      <div class="filters">
+        <select id="sched-job" class="field field-grow"></select>
+        <input type="time" id="sched-time" class="field" value="07:30" step="60">
+        <select id="sched-freq" class="field">
+          <option value="DAILY">Every day</option>
+          <option value="HOURLY">Every hour</option>
+          <option value="WEEKLY">Every week</option>
+        </select>
+        <button id="sched-add" class="btn btn-solid">Add</button>
+      </div>
+      <p class="presets">
+        Or:
+        <button class="link-btn" data-preset="0730">once daily at 07:30</button> ·
+        <button class="link-btn" data-preset="0730,1900">twice daily</button> ·
+        <button class="link-btn" data-preset="hourly">every hour</button>
+      </p>
+    </section>
+  </section>
+
+</main>
+
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-scrim" data-close></div>
+  <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <header class="drawer-head">
+      <div>
+        <h2 id="drawer-title"></h2>
+        <p id="drawer-sub" class="drawer-sub"></p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">&times;</button>
+    </header>
+    <dl id="drawer-meta" class="facts"></dl>
+    <div class="drawer-nav">
+      <button class="drawer-tab current" data-note="pretty">Pretty</button>
+      <button class="drawer-tab" data-note="raw">Raw</button>
+    </div>
+    <div id="drawer-notes" class="notes"></div>
+  </aside>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>

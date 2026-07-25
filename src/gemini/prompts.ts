@@ -10,6 +10,17 @@ Your notes must be grounded exclusively in what the lecturer actually says and s
 - Do NOT include any information that was not explicitly covered in this video — no additions from outside knowledge`;
 
 /**
+ * Pins the timestamp format so timestamps can be rebased mechanically.
+ *
+ * Segments are uploaded as standalone videos, so the model always numbers from
+ * 00:00 regardless of where the segment sits in the lecture. Rather than ask it
+ * to add its own offset — arithmetic it can get wrong invisibly — we require a
+ * single unambiguous format and let src/utils/timestamps.ts do the shifting.
+ */
+const TIMESTAMP_FORMAT = `Write every timestamp in square brackets as [MM:SS] or [H:MM:SS], measured from the START OF THIS VIDEO (00:00).
+Do not try to account for any earlier segments — offsets are applied automatically afterwards.`;
+
+/**
  * Build the prompt for a non-final segment of a multi-part lecture video.
  * Asks for study notes only — no json-actions (those come with the final part).
  */
@@ -30,6 +41,8 @@ Write comprehensive Markdown study notes covering everything in this segment:
 - All examples and demonstrations shown, described concretely
 - Any diagrams or slides (represent as text/ASCII)
 - Timestamps for each major topic shift
+
+${TIMESTAMP_FORMAT}
 
 Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.
 
@@ -61,6 +74,8 @@ Write comprehensive Markdown study notes for this final segment, continuing from
 - All examples and demonstrations, described concretely
 - Any diagrams or slides (represent as text/ASCII)
 - Direct quotes for important statements
+
+${TIMESTAMP_FORMAT}
 
 Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.
 
@@ -102,6 +117,8 @@ Write extensive Markdown study notes covering everything the lecturer actually d
 - All examples and demonstrations shown, described concretely
 - Any diagrams or slides (represent as text/ASCII)
 - Direct quotes for important or memorable statements
+
+${TIMESTAMP_FORMAT}
 
 Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.
 

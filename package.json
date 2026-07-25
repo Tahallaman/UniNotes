@@ -5,13 +5,18 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "dev": "tsx src/main.ts",
+    "gui": "tsx scripts/gui.ts",
+    "scan": "tsx scripts/scan-panopto.ts",
     "setup-auth:panopto": "tsx src/main.ts --auth panopto",
     "setup-auth:gemini": "tsx src/main.ts --auth gemini",
     "migrate": "tsx scripts/migrate-to-subfolders.ts",
     "export": "tsx scripts/export-notes.ts",
     "pretty": "tsx scripts/run-pretty.ts",
-    "local": "tsx scripts/process-local.ts"
+    "local": "tsx scripts/process-local.ts",
+    "probe:vertex": "tsx scripts/probe-vertex.ts",
+    "probe:browser": "tsx scripts/probe-browser.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

@@ -1,7 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
 import { CONFIG } from "../config.js";
 import { ensureDirectories } from "./utils/paths.js";
+import { acquireLock, releaseLock } from "./utils/lock.js";
+import { loadIgnoredTitles, isIgnoredTitle } from "./utils/ignoreList.js";
 import { log } from "./utils/logger.js";
 import { withRetry } from "./utils/retry.js";
 import { getDb, closeDb } from "./db/schema.js";
@@ -15,17 +15,11 @@ import {
 } from "./db/tracker.js";
 import { scrapePanopto, authPanopto, toNewLecture } from "./panopto/scraper.js";
 import { downloadLecture } from "./panopto/downloader.js";
-import { uploadVideoToGemini, uploadAdditionalVideoToChat, authGemini } from "./gemini/uploader.js";
-import { submitPromptAndWaitForResponse } from "./gemini/prompter.js";
-import { buildPrompt, buildPromptMiddlePart, buildPromptFinalPart } from "./gemini/prompts.js";
-import { processLectureViaApi } from "./gemini/apiProcessor.js";
-import { parseGeminiResponse, type ParsedActions } from "./notes/parser.js";
-import { splitVideoIfNeeded } from "./utils/videoSplitter.js";
-import { writeNotes, writePrettyNotes } from "./notes/writer.js";
-import { prettifyNotes } from "./notes/prettifier.js";
-import { appendTodoItems } from "./todo/manager.js";
-import { syncToWorkspace } from "./utils/workspaceSync.js";
-import { resolveUploaderMode } from "./utils/uploaderMode.js";
+import { authGemini, closeGeminiBrowser } from "./gemini/browserPool.js";
+import { processLecture } from "./pipeline/processLecture.js";
+import { backfillPretty } from "./pipeline/prettyBackfill.js";
+import { mapWithLimitSettled } from "./utils/limit.js";
+import { resolveUploaderMode, resolvePrettyMode } from "./utils/uploaderMode.js";
 
 // ── CLI argument handling ──────────────────────────────────────
 
@@ -34,19 +28,10 @@ const authMode = args.includes("--auth")
   ? args[args.indexOf("--auth") + 1]
   : null;
 const retryErrors = args.includes("--retry");
-const uploaderMode = resolveUploaderMode(args);
-
-function loadIgnoredTitles(): Set<string> {
-  const p = path.join(CONFIG.rootDir, "ignored-lectures.txt");
-  if (!fs.existsSync(p)) return new Set();
-  return new Set(
-    fs.readFileSync(p, "utf-8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith("#"))
-      .map((l) => l.toLowerCase()),
-  );
-}
+const providers = {
+  notes: resolveUploaderMode(args),
+  pretty: resolvePrettyMode(args),
+};
 
 async function main(): Promise<void> {
   ensureDirectories();
@@ -88,7 +73,7 @@ async function main(): Promise<void> {
     });
 
     const ignoredTitles = loadIgnoredTitles();
-    const isIgnored = (title: string) => ignoredTitles.has(title.toLowerCase().trim());
+    const isIgnored = (title: string) => isIgnoredTitle(title, ignoredTitles);
 
     for (const lecture of newLectures) {
       if (isIgnored(lecture.title)) {
@@ -115,153 +100,47 @@ async function main(): Promise<void> {
       }
     }
 
-    // Step 3: Process downloaded lectures through Gemini
-    log.info(`Step 3: Processing through Gemini (uploader mode: ${uploaderMode})...`);
+    // Step 3-5: Process downloaded lectures through Gemini, concurrently.
+    // Each lecture handles its own splitting, notes, prettifying and cleanup;
+    // parts within a lecture are parallelised further inside the providers.
     const toProcess = getByStatus("downloaded").filter((r) => !isIgnored(r.title));
-    for (const lecture of toProcess) {
-      try {
-        updateStatus(lecture.id, "processing");
+    log.info(
+      `Step 3: Processing ${toProcess.length} lecture(s) — notes via ${providers.notes}, ` +
+        `pretty via ${providers.pretty}, up to ${CONFIG.concurrency.lectures} at a time...`,
+    );
 
-        // Split video if longer than 45 minutes
-        const videoParts = await splitVideoIfNeeded(lecture.temp_file!);
-        const isMultiPart = videoParts.length > 1;
+    const outcomes = await mapWithLimitSettled(
+      toProcess,
+      CONFIG.concurrency.lectures,
+      (lecture) =>
+        processLecture(
+          {
+            id: lecture.id,
+            title: lecture.title,
+            courseCode: lecture.course_code,
+            videoPath: lecture.temp_file!,
+            panoptoUrl: lecture.panopto_url,
+            onComplete: "delete",
+          },
+          providers,
+        ),
+    );
 
-        let finalChatUrl = "";
-        let combinedMarkdown = "";
-        let actions: ParsedActions | null = null;
-
-        const MAX_RETRIES = 2;
-
-        if (uploaderMode === "api") {
-          // API path: Vertex AI handles part-by-part processing internally,
-          // with the same multi-part/single-part semantics as the browser path.
-          const result = await processLectureViaApi(lecture.title, lecture.course_code, videoParts);
-          combinedMarkdown = result.markdown;
-          actions = result.actions;
-          finalChatUrl = result.chatUrl;
-        } else if (isMultiPart) {
-          // Each part gets its own fresh Gemini chat — Gemini has known bugs
-          // with multi-video conversations (ignores subsequent uploads).
-          const markdownParts: string[] = [];
-
-          for (let i = 0; i < videoParts.length; i++) {
-            const isLast = i === videoParts.length - 1;
-            const prompt = isLast
-              ? buildPromptFinalPart(lecture.title, lecture.course_code, i + 1, videoParts.length)
-              : buildPromptMiddlePart(lecture.title, lecture.course_code, i + 1, videoParts.length);
-
-            let partResponse = "";
-            let lastErr: unknown;
-
-            for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-              const { page, context } = await uploadVideoToGemini(videoParts[i]);
-              try {
-                const { response, chatUrl } = await submitPromptAndWaitForResponse(page, prompt);
-                log.info(`Part ${i + 1}/${videoParts.length} response (${response.length} chars): ${response.slice(0, 200)}`);
-
-                if (response.length < 200 && !response.includes("#")) {
-                  log.warn(`Part ${i + 1} short response, attempt ${attempt + 1}/${MAX_RETRIES + 1}`);
-                  lastErr = new Error(`Short response on part ${i + 1}`);
-                  continue;
-                }
-
-                partResponse = response;
-                if (isLast) finalChatUrl = chatUrl;
-                lastErr = undefined;
-                break;
-              } catch (err) {
-                log.warn(`Part ${i + 1} attempt ${attempt + 1}/${MAX_RETRIES + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
-                lastErr = err;
-              } finally {
-                await context.close();
-              }
-            }
-
-            if (lastErr !== undefined) throw lastErr;
-
-            const parsed = parseGeminiResponse(partResponse);
-            markdownParts.push(parsed.markdown);
-            if (isLast) actions = parsed.actions;
-          }
-
-          combinedMarkdown = markdownParts.join("\n\n---\n\n");
-        } else {
-          // Single video: one chat, full prompt with json-actions
-          let lastErr: unknown;
-          for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            const { page, context } = await uploadVideoToGemini(videoParts[0]);
-            try {
-              const prompt = buildPrompt(lecture.title, lecture.course_code);
-              const { response, chatUrl } = await submitPromptAndWaitForResponse(page, prompt);
-
-              if (response.length < 200 && !response.includes("#")) {
-                log.warn(`Single-part short response, attempt ${attempt + 1}/${MAX_RETRIES + 1}`);
-                lastErr = new Error("Short response");
-                continue;
-              }
-
-              const parsed = parseGeminiResponse(response);
-              finalChatUrl = chatUrl;
-              combinedMarkdown = parsed.markdown;
-              actions = parsed.actions;
-              lastErr = undefined;
-              break;
-            } catch (err) {
-              log.warn(`Single-part attempt ${attempt + 1}/${MAX_RETRIES + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
-              lastErr = err;
-            } finally {
-              await context.close();
-            }
-          }
-          if (lastErr !== undefined) throw lastErr;
-        }
-
-        updateStatus(lecture.id, "processed", { gemini_chat_url: finalChatUrl });
-
-        // Step 4: Parse response → save notes → append TODO
-        const lectureDir = writeNotes({
-          title: lecture.title,
-          courseCode: lecture.course_code,
-          panoptoUrl: lecture.panopto_url,
-          geminiChatUrl: finalChatUrl,
-          markdown: combinedMarkdown,
-          actions,
-        });
-
-        // Step 4b: Generate pretty notes (non-fatal)
-        try {
-          const rawFilePath = path.join(lectureDir, "lecture.raw.md");
-          const prettyMarkdown = await prettifyNotes(rawFilePath);
-          writePrettyNotes(lectureDir, prettyMarkdown);
-
-          // Sync pretty notes to University workspace (non-fatal)
-          try {
-            syncToWorkspace(lecture.course_code, path.join(lectureDir, "lecture.pretty.md"));
-          } catch (syncErr) {
-            log.warn(`Workspace sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
-          }
-        } catch (err) {
-          log.warn(`Pretty notes failed (raw notes preserved): ${err instanceof Error ? err.message : String(err)}`);
-        }
-
-        appendTodoItems({
-          title: lecture.title,
-          courseCode: lecture.course_code,
-          panoptoUrl: lecture.panopto_url,
-          actions,
-        });
-
-        // Step 5: Mark complete, delete temp files
-        updateStatus(lecture.id, "complete", { notes_file: lectureDir });
-        deleteTempFile(lecture.temp_file);
-        if (isMultiPart) {
-          for (const part of videoParts) {
-            deleteTempFile(part);
-          }
-        }
-      } catch (err) {
-        setError(lecture.id, err instanceof Error ? err.message : String(err));
+    // Record failures per lecture rather than letting one bad video abort the run.
+    outcomes.forEach((outcome, i) => {
+      if (!outcome.ok) {
+        const msg = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+        log.error(`Failed: ${toProcess[i].title} — ${msg}`);
+        setError(toProcess[i].id, msg);
       }
+    });
+
+    // Step 6: Retry any pretty notes that failed here or on an earlier run.
+    // Prettifying is non-fatal, so without this sweep a failure would be
+    // silently forgotten and the lecture left with raw notes only.
+    const backfill = await backfillPretty({ provider: providers.pretty });
+    if (backfill.total > 0) {
+      log.info(`Pretty backfill: ${backfill.done} generated, ${backfill.errors} still failing`);
     }
 
     // Summary
@@ -271,54 +150,9 @@ async function main(): Promise<void> {
       `=== Pipeline complete: ${complete.length} done, ${errors.length} errors ===`,
     );
   } finally {
+    await closeGeminiBrowser();
     releaseLock();
     closeDb();
-  }
-}
-
-// ── Lock file ──────────────────────────────────────────────────
-
-function acquireLock(): boolean {
-  try {
-    // O_EXCL: fail if file exists (atomic check-and-create)
-    const fd = fs.openSync(CONFIG.paths.lockFile, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
-    fs.writeSync(fd, `${process.pid}`);
-    fs.closeSync(fd);
-    return true;
-  } catch {
-    // Check if the lock is stale (process no longer running)
-    try {
-      const pid = parseInt(fs.readFileSync(CONFIG.paths.lockFile, "utf-8"), 10);
-      try {
-        process.kill(pid, 0); // Check if process exists
-        return false; // Process is alive, lock is valid
-      } catch {
-        // Process is dead, lock is stale — remove it
-        log.warn(`Removing stale lock (PID ${pid} no longer running)`);
-        fs.unlinkSync(CONFIG.paths.lockFile);
-        return acquireLock();
-      }
-    } catch {
-      return false;
-    }
-  }
-}
-
-function releaseLock(): void {
-  try {
-    fs.unlinkSync(CONFIG.paths.lockFile);
-  } catch {
-    // Already removed
-  }
-}
-
-function deleteTempFile(tempFile: string | null): void {
-  if (!tempFile) return;
-  try {
-    fs.unlinkSync(tempFile);
-    log.info(`Deleted temp file: ${tempFile}`);
-  } catch {
-    log.warn(`Could not delete temp file: ${tempFile}`);
   }
 }
 
@@ -326,8 +160,9 @@ function deleteTempFile(tempFile: string | null): void {
 
 main()
   .then(() => process.exit(0))
-  .catch((err) => {
+  .catch(async (err) => {
     log.error(`Fatal error: ${err instanceof Error ? err.message : String(err)}`);
+    await closeGeminiBrowser().catch(() => {});
     releaseLock();
     closeDb();
     process.exit(1);
