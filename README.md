@@ -44,11 +44,43 @@ Everything is available both as a CLI and as a local control panel
 (`npm run gui`). The panel is a launcher, not a second implementation — every
 button runs the command you'd otherwise type.
 
+### Why Gemini
+
+Gemini is multimodal in the way that matters here: **it takes the video itself.**
+It watches the recording — what the lecturer says and what's on the screen, at
+the same time — rather than reading a transcript with the slides pasted
+underneath and hoping the two line up. Gone are the days of copying a transcript
+and a slide deck into a chat window and hoping the model works out which sentence
+went with which diagram.
+
+Which means you can sit in the lecture and follow it, instead of splitting your
+attention between listening and writing everything down. *(Please still attend
+your lectures.)*
+
+### What you'll need
+
+One of these two, because a lecture is a video file and something has to be
+willing to watch it:
+
+- **A Gemini Pro subscription.** The `browser` backend drives gemini.google.com
+  with your signed-in session. Free accounts cap video uploads at about five
+  minutes — shorter than any segment this splits a lecture into — so a paid
+  account is what makes this path work at all.
+- **A Google Cloud account.** The `api` backend calls Gemini on Vertex AI, and
+  new accounts get [US$300 in free trial credits](https://cloud.google.com/free),
+  which goes a long way at Flash prices. No Gemini subscription needed.
+
+The choice is made *per stage*, so you can generate notes one way and prettify
+them the other — see [Two backends](#two-backends). Plus
+[ffmpeg](https://ffmpeg.org/download.html) and Node 20 or newer.
+
 ### Highlights
 
 - **Any Panopto tenant** — one host URL is the whole institution-specific setup.
-- **Two backends per stage** — free through your signed-in browser, or billed and
-  ~10× faster through Vertex AI. Chosen independently for notes and for prettifying.
+- **Two backends per stage** — your signed-in browser, or Vertex AI at roughly
+  10× the speed. Chosen independently for notes and for prettifying.
+- **Editable prompts** — the parts no code parses are settings, so what the notes
+  contain is yours to change without touching TypeScript.
 - **Concurrent** — lectures and the parts within them run in parallel, with limits
   you can turn down to 1 to reproduce fully sequential behaviour.
 - **Resumable** — a run that dies on part 6 of 8 reuses parts 1–5 next time.
@@ -191,7 +223,22 @@ npm run setup-auth:gemini    # opens Edge → log in to Google → close the win
 Sessions are saved to `browser-data/` (gitignored). If your institution uses
 2FA, you'll do it here and not again until the session expires.
 
-### 4. Check it works
+### 4. Subscribe to your courses in Panopto
+
+**This step is easy to skip and nothing works without it.** The scraper reads
+your Panopto **Subscriptions** page, which is the only list that says which
+folders are *yours* — being enrolled in a paper doesn't put its recordings there,
+and a tenant hosts thousands of folders you have no business scraping.
+
+While signed in to Panopto in your normal browser, open each course's folder and
+use its **Subscribe** control. Then load the Subscriptions page itself and check
+that every course you want notes for is on it — that page is literally what the
+scraper will see.
+
+A run that finds nothing is nearly always this — see
+[Troubleshooting](#troubleshooting).
+
+### 5. Check it works
 
 ```bash
 npm run probe:browser   # is the profile signed in? do parallel tabs work?
@@ -218,11 +265,14 @@ Each stage independently runs through **either** backend:
 
 | Backend | What it is | Trade-off |
 |---|---|---|
-| `browser` | Playwright driving gemini.google.com with your logged-in session | Free; slower; rate-limited by Google |
+| `browser` | Playwright driving gemini.google.com with your logged-in session | No cloud account; slower; rate-limited by Google; **needs Gemini Pro** |
 | `api` | Gemini on Vertex AI via gcloud ADC | Billed; roughly 10× faster; parallelises cleanly |
 
-**`browser` is the default and needs no cloud account at all** — just a Google
-account with Gemini access. Start there.
+**`browser` is the default and needs no cloud account at all** — but it does need
+a Gemini Pro subscription, because free accounts cap video uploads at about five
+minutes and every segment here is longer than that. If you'd rather spend
+[Google Cloud trial credit](https://cloud.google.com/free) than a subscription,
+start on `api` instead.
 
 Set them per stage in `config.ts` under `providers`, in the control panel, or
 per-run with `--uploader=` (notes) and `--pretty=` (pretty).
