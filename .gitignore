@@ -19,19 +19,16 @@ logs/
 *.db-wal
 *.db-shm
 
-# ── Incoming videos (manual input queue) ─────────────────────────
+# ── Your lectures and everything derived from them ───────────────
+# Videos, notes and exports are your own coursework: they routinely quote
+# named people, and lecture recordings are usually your institution's
+# copyright. None of it belongs in a repository you might share.
 Incoming/
 Lectures/
+Exports/
 
-# ── Exports (derived — regenerate with npm run export) ────────────
-Exports/**/*.json
-
-# ── Lecture video files (large binaries) ─────────────────────────
-Lectures/**/*.mp4
-Lectures/**/*.mkv
-Lectures/**/*.mov
-Lectures/**/*.avi
-Lectures/**/*.webm
+# ── Lectures you've told the pipeline to skip (real lecture titles) ──
+ignored-lectures.txt
 
 # ── GUI settings overrides (machine-specific; defaults live in config.ts) ──
 settings.json

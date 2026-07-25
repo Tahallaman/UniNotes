@@ -20,9 +20,22 @@ function argValue(name: string): string | undefined {
   return inline?.split("=").slice(1).join("=");
 }
 
-const project = process.env.GOOGLE_CLOUD_PROJECT || CONFIG.vertex.project;
+const project = (process.env.GOOGLE_CLOUD_PROJECT || CONFIG.vertex.project).trim();
 const location = argValue("location") || process.env.GOOGLE_CLOUD_LOCATION || CONFIG.vertex.location;
 const model = argValue("model") || CONFIG.vertex.model;
+
+// Stop here rather than letting the SDK report "Unable to authenticate" — the
+// whole job of a probe is to name the actual problem.
+if (project.length === 0) {
+  console.error(
+    "[FAIL] No Google Cloud project configured.\n\n" +
+      "  Set vertex.project in config.ts, or the GOOGLE_CLOUD_PROJECT environment\n" +
+      "  variable, or Settings -> Google Cloud in the control panel.\n\n" +
+      "  You only need this for the \"api\" backend. The \"browser\" backend uses your\n" +
+      "  signed-in gemini.google.com session and needs no cloud account.",
+  );
+  process.exit(1);
+}
 
 console.log(`project  : ${project}`);
 console.log(`location : ${location}`);

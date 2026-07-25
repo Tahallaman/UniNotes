@@ -11,16 +11,47 @@ import { Storage } from "@google-cloud/storage";
 import { CONFIG } from "../../config.js";
 import { createLimiter } from "../utils/limit.js";
 
+/** Thrown instead of letting the SDK fail with an opaque "project not set". */
+export class VertexNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "No Google Cloud project configured, which the \"api\" provider needs. Set " +
+        "vertex.project in config.ts (or the GOOGLE_CLOUD_PROJECT environment " +
+        "variable, or Settings → Google Cloud in the control panel), or switch the " +
+        "stage to the \"browser\" provider, which needs no cloud account at all.",
+    );
+    this.name = "VertexNotConfiguredError";
+  }
+}
+
 export function resolveProject(): string {
-  return process.env.GOOGLE_CLOUD_PROJECT || CONFIG.vertex.project;
+  const project = (process.env.GOOGLE_CLOUD_PROJECT || CONFIG.vertex.project).trim();
+  if (project.length === 0) throw new VertexNotConfiguredError();
+  return project;
+}
+
+/** Same as resolveProject() but returns "" rather than throwing — for health checks. */
+export function resolveProjectOrEmpty(): string {
+  return (process.env.GOOGLE_CLOUD_PROJECT || CONFIG.vertex.project).trim();
 }
 
 export function resolveLocation(): string {
   return process.env.GOOGLE_CLOUD_LOCATION || CONFIG.vertex.location;
 }
 
+/**
+ * Bucket to stage video chunks in.
+ *
+ * Derived from the project when unset. Bucket names are globally unique across
+ * all of Google Cloud, so asking a new user to invent one is a setup step that
+ * fails on a name collision with a stranger's bucket; a project ID is already
+ * unique, so `uninotes-<project>` is both available and self-explanatory.
+ * The 63-character limit is the only thing that needs guarding.
+ */
 export function resolveBucketName(): string {
-  return process.env.UNINOTES_GCS_BUCKET || CONFIG.vertex.gcsBucket;
+  const configured = (process.env.UNINOTES_GCS_BUCKET || CONFIG.vertex.gcsBucket).trim();
+  if (configured.length > 0) return configured;
+  return `uninotes-${resolveProject()}`.toLowerCase().replace(/[^a-z0-9-_]/g, "-").slice(0, 63);
 }
 
 export function resolveBucketLocation(): string {

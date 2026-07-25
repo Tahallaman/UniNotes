@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyUserSettings } from "./src/settings/overlay.js";
@@ -53,11 +54,21 @@ export const DEFAULTS = {
 
   /** Panopto settings */
   panopto: {
-    baseUrl: "https://auckland.au.panopto.com",
+    /**
+     * Your institution's Panopto tenant, scheme and host only — no trailing slash.
+     * This is the one value the tool cannot guess, so it ships empty and every
+     * Panopto command fails with a message naming it until you set it.
+     *
+     * It's the first part of the address you see when watching a recording:
+     *   https://auckland.au.panopto.com/Panopto/Pages/Viewer.aspx?id=...
+     *   ^--------- this much ---------^
+     *
+     * Regional suffixes vary (`.hosted.`, `.eu.`, `.au.`, `.ca.`); the paths
+     * underneath are the same on every tenant, which is why only the host is
+     * configurable. Override with env UNINOTES_PANOPTO_URL.
+     */
+    baseUrl: "" as string,
     subscriptionsPath: "/Panopto/Pages/Sessions/List.aspx#isSubscriptionsPage=true",
-    /** Direct download URL template — replace {ID} with the Panopto GUID */
-    downloadUrlTemplate:
-      "https://auckland.au.panopto.com/Panopto/Podcast/Social/{ID}.mp4?mediaTargetType=videoPodcast",
     /** Max scroll attempts to load infinite-scroll items */
     maxScrolls: 3,
     /** Delay between scrolls (ms) */
@@ -150,19 +161,27 @@ export const DEFAULTS = {
 
   /**
    * A second copy of each pretty note, filed into another folder as it's written
-   * — typically the OneDrive folder you actually study from.
+   * — typically the OneDrive/Dropbox/Obsidian folder you actually study from.
+   *
+   * Off by default: there is no sensible guess for where your notes live, and a
+   * tool that starts writing into a synced folder you didn't nominate is worse
+   * than one that does nothing.
    */
   workspace: {
     /** Turn the second copy off entirely. Nothing else here applies when false. */
-    enabled: true as boolean,
-    root: "C:\\Users\\you\\OneDrive\\University",
+    enabled: false as boolean,
+    root: path.join(os.homedir(), "Documents", "UniNotes"),
     unsortedFolder: "Unsorted Lectures",
   },
 
   /** Vertex AI (Google Cloud) settings — used by the "api" uploader mode */
   vertex: {
-    /** Google Cloud project ID. Override with env GOOGLE_CLOUD_PROJECT. */
-    project: "your-gcp-project",
+    /**
+     * Google Cloud project ID. Only needed when a stage's provider is "api" —
+     * the browser path never touches Google Cloud. Override with env
+     * GOOGLE_CLOUD_PROJECT.
+     */
+    project: "" as string,
     /** Vertex endpoint region. Override with env GOOGLE_CLOUD_LOCATION.
      * NOTE: the 3.x Flash models are only served on "global" (404 in us-central1).
      * Verified for gemini-3.6-flash via scripts/probe-vertex.ts. */
@@ -191,9 +210,13 @@ export const DEFAULTS = {
         thinkingBudget: 0,
       },
     },
-    /** GCS bucket video chunks are uploaded to before calling generateContent.
-     * Override with env UNINOTES_GCS_BUCKET. */
-    gcsBucket: "uninotes-videos-your-gcp-project",
+    /**
+     * GCS bucket video chunks are staged in before calling generateContent.
+     * Blank derives `uninotes-<project>` and creates it on first use, which is
+     * one less globally-unique name for you to invent. Set it if you'd rather
+     * reuse a bucket you already own. Override with env UNINOTES_GCS_BUCKET.
+     */
+    gcsBucket: "" as string,
     /** GCS bucket region — must be a real Cloud Storage location. Kept separate
      * from `location` because Vertex uses "global" but GCS rejects it.
      * Override with env UNINOTES_GCS_BUCKET_LOCATION. */

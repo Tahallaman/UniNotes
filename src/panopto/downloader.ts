@@ -2,6 +2,7 @@ import path from "node:path";
 import { CONFIG } from "../../config.js";
 import { log } from "../utils/logger.js";
 import { launchPanoptoBrowser } from "./scraper.js";
+import { viewerUrl as buildViewerUrl } from "./endpoints.js";
 import type { LectureRow } from "../db/tracker.js";
 
 /**
@@ -14,7 +15,7 @@ import type { LectureRow } from "../db/tracker.js";
  *   2. Wait for the player to load
  *   3. Click "More actions" button in the top bar
  *   4. Click "Download podcast" menuitem
- *   5. Catch the browser download event (goes via download.cdn.au.panopto.com with signed URL)
+ *   5. Catch the browser download event (goes via Panopto's regional CDN with a signed URL)
  */
 export async function downloadLecture(lecture: LectureRow): Promise<string> {
   const destPath = path.join(CONFIG.paths.temp, `${lecture.id}.mp4`);
@@ -28,8 +29,7 @@ export async function downloadLecture(lecture: LectureRow): Promise<string> {
     // Step 1: Navigate to the viewer page
     // Use "load" not "networkidle" — Panopto has background analytics that
     // prevent networkidle from ever firing.
-    const viewerUrl = lecture.panopto_url ||
-      `${CONFIG.panopto.baseUrl}/Panopto/Pages/Viewer.aspx?id=${lecture.id}`;
+    const viewerUrl = lecture.panopto_url || buildViewerUrl(lecture.id);
     await page.goto(viewerUrl, {
       timeout: CONFIG.panopto.navigationTimeout,
       waitUntil: "load",

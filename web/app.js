@@ -850,6 +850,10 @@ function renderSetting(field) {
     const input = el("input", { class: "field field-grow" });
     input.type = "text";
     input.value = value ?? "";
+    // A blank box says nothing about what belongs in it. The placeholder carries
+    // the shape of the answer, which for a Panopto host or a bucket name is most
+    // of what a first-time user needs.
+    if (field.placeholder) input.placeholder = field.placeholder;
     input.addEventListener("change", () => setDraft(field.path, input.value));
     control.append(input);
   }

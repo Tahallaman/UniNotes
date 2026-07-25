@@ -37,9 +37,31 @@ export interface SettingField {
    * Still validated normally, so the value survives being toggled off and on.
    */
   dependsOn?: string;
+  /**
+   * A blank value is meaningful for this "text" field — it means "unset", and
+   * the code derives or refuses accordingly. Without this, blank is an error,
+   * which is right for a field like a folder path but wrong for one whose whole
+   * default is "work it out from something else".
+   */
+  optional?: boolean;
+  /** Shown under the field as a worked example of the expected format. */
+  placeholder?: string;
 }
 
 export const SETTING_FIELDS: readonly SettingField[] = [
+  // ── Institution ─────────────────────────────────────────────────────────
+  // First, deliberately: nothing on the Panopto path works until this is set,
+  // and it is the one value no default can guess.
+  {
+    path: "panopto.baseUrl",
+    label: "Panopto site",
+    group: "Institution",
+    type: "text",
+    optional: true,
+    placeholder: "https://yourschool.hosted.panopto.com",
+    help: "Scheme and host only, no trailing slash — the start of the address you see when watching a recording.",
+  },
+
   // ── Providers ───────────────────────────────────────────────────────────
   {
     path: "providers.notes",
@@ -87,6 +109,43 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     type: "text",
     help: "3.x Flash is only served on global; other regions 404.",
   },
+
+  // ── Google Cloud ────────────────────────────────────────────────────────
+  // Only consulted when a stage's backend is "api"; the browser path never
+  // touches any of it.
+  {
+    path: "vertex.project",
+    label: "Project ID",
+    group: "Google Cloud",
+    type: "text",
+    optional: true,
+    placeholder: "my-project-123456",
+    help: "Needed only by the api backend. Leave blank if you only use the browser backend.",
+  },
+  {
+    path: "vertex.gcsBucket",
+    label: "Storage bucket",
+    group: "Google Cloud",
+    type: "text",
+    optional: true,
+    placeholder: "derived: uninotes-<project>",
+    help: "Where video chunks are staged for Vertex to read. Blank derives a name from the project and creates it on first use.",
+  },
+  {
+    path: "vertex.bucketLocation",
+    label: "Bucket region",
+    group: "Google Cloud",
+    type: "text",
+    placeholder: "us-central1",
+    help: "A real Cloud Storage region — unlike Vertex, GCS rejects \"global\".",
+  },
+  {
+    path: "vertex.cleanupUploads",
+    label: "Delete chunks after use",
+    group: "Google Cloud",
+    type: "bool",
+    help: "Turn off only to debug what was actually uploaded — chunks are large.",
+  },
   {
     path: "vertex.generation.notes.thinkingLevel",
     label: "Thinking (notes)",
@@ -94,13 +153,6 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     type: "enum",
     options: ["", "minimal", "low", "medium", "high"],
     help: "Blank = model default. Lower trims latency at some comprehension cost.",
-  },
-  {
-    path: "vertex.cleanupUploads",
-    label: "Delete GCS chunks after use",
-    group: "Models",
-    type: "bool",
-    help: "Turn off only to debug what was actually uploaded — chunks are large.",
   },
 
   // ── Concurrency ─────────────────────────────────────────────────────────
@@ -291,7 +343,14 @@ export function coerce(field: SettingField, raw: unknown): CoercionResult {
 
     case "text": {
       const s = String(raw ?? "").trim();
-      if (s.length === 0) return { ok: false, error: `${field.path}: cannot be empty` };
+      if (s.length === 0) {
+        // Blank is a legitimate "unset" for an optional field — the code that
+        // reads it derives a value or reports a clear error. Kept as "" rather
+        // than undefined so it matches the empty default exactly, which is what
+        // lets the panel drop the override instead of recording a no-op.
+        if (field.optional) return { ok: true, value: "" };
+        return { ok: false, error: `${field.path}: cannot be empty` };
+      }
       return { ok: true, value: s };
     }
   }

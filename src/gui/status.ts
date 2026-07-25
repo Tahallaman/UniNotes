@@ -13,7 +13,7 @@ import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { CONFIG } from "../../config.js";
-import { effectiveConfig } from "./effective.js";
+import { effectiveConfig, type EffectiveConfig } from "./effective.js";
 import { findPendingPretty } from "../pipeline/prettyBackfill.js";
 import { lectureCounts } from "./library.js";
 
@@ -162,10 +162,23 @@ function adcPath(): string {
   return path.join(appData, "gcloud", "application_default_credentials.json");
 }
 
-async function buildChecks(providers: { notes: string; pretty: string }): Promise<HealthCheck[]> {
+async function buildChecks(effective: EffectiveConfig): Promise<HealthCheck[]> {
+  const providers = effective.providers;
   const checks: HealthCheck[] = [];
 
   checks.push(await checkFfmpeg());
+
+  // Before the session check, deliberately: "sign in to Panopto" is unactionable
+  // advice when the tool doesn't yet know which Panopto.
+  const site = (process.env.UNINOTES_PANOPTO_URL || effective.panopto.baseUrl).trim();
+  checks.push({
+    id: "panopto-site",
+    label: "Panopto site",
+    ok: site.length > 0,
+    detail: site.length > 0
+      ? site
+      : "Not set — Settings → Institution. Use your institution's Panopto address, e.g. https://yourschool.hosted.panopto.com.",
+  });
 
   const panoptoOk = profileLooksAuthenticated(CONFIG.paths.browserData.panopto);
   checks.push({
@@ -206,6 +219,19 @@ async function buildChecks(providers: { notes: string; pretty: string }): Promis
       : needsAdc
         ? "Missing — run `gcloud auth application-default login`."
         : "Missing, but no stage is using the api backend.",
+  });
+
+  const project = (process.env.GOOGLE_CLOUD_PROJECT || effective.vertex.project).trim();
+  checks.push({
+    id: "gcp-project",
+    label: "Google Cloud project",
+    ok: project.length > 0,
+    advisory: !needsAdc,
+    detail: project.length > 0
+      ? project
+      : needsAdc
+        ? "Not set — Settings → Google Cloud. The api backend can't run without it."
+        : "Not set, but no stage is using the api backend.",
   });
 
   const lock = readLock();
@@ -257,7 +283,7 @@ export async function getStatus(): Promise<SystemStatus> {
       orphanParts: orphanParts.length,
       checkpoints: countCheckpoints(),
     },
-    checks: await buildChecks(effective.providers),
+    checks: await buildChecks(effective),
     settingsOverrides: overrides,
   };
 }

@@ -4,6 +4,13 @@ import { chromium, type BrowserContext } from "playwright";
 import { CONFIG } from "../../config.js";
 import { log } from "../utils/logger.js";
 import { lectureExists, type NewLecture } from "../db/tracker.js";
+import {
+  downloadUrl as buildDownloadUrl,
+  isPanoptoAppUrl,
+  isPanoptoConfigured,
+  PanoptoNotConfiguredError,
+  subscriptionsUrl,
+} from "./endpoints.js";
 
 const STORAGE_STATE_PATH = path.join(
   CONFIG.paths.browserData.panopto,
@@ -29,6 +36,11 @@ export interface ScrapedLecture {
 export async function launchPanoptoBrowser(
   headless?: boolean,
 ): Promise<BrowserContext> {
+  // Checked here rather than at each entry point: every Panopto code path opens
+  // a browser through this function, so this is the one place that can't be
+  // missed — and it fails before spending a browser launch on a URL we can't build.
+  if (!isPanoptoConfigured()) throw new PanoptoNotConfiguredError();
+
   const isHeadless = headless ?? CONFIG.browser.headless;
 
   // For pipeline runs, load saved storage state into a fresh context.
@@ -68,10 +80,7 @@ export async function authPanopto(): Promise<void> {
   const context = await launchPanoptoBrowser(false);
   const page = context.pages()[0] || (await context.newPage());
 
-  await page.goto(
-    CONFIG.panopto.baseUrl + CONFIG.panopto.subscriptionsPath,
-    { timeout: CONFIG.panopto.navigationTimeout },
-  );
+  await page.goto(subscriptionsUrl(), { timeout: CONFIG.panopto.navigationTimeout });
 
   log.info("Complete SSO login in the browser. Auth saves automatically once logged in — then close the window.");
 
@@ -88,11 +97,7 @@ export async function authPanopto(): Promise<void> {
         const isLoggedIn = await activePage.evaluate(() =>
           !!document.querySelector('button[aria-label="User settings"]'),
         ).catch(() => false);
-        if (
-          url.includes("auckland.au.panopto.com/Panopto/Pages") &&
-          !url.includes("Auth") &&
-          isLoggedIn
-        ) {
+        if (isPanoptoAppUrl(url) && !url.includes("Auth") && isLoggedIn) {
           const state = await context.storageState();
           fs.mkdirSync(path.dirname(STORAGE_STATE_PATH), { recursive: true });
           fs.writeFileSync(STORAGE_STATE_PATH, JSON.stringify(state, null, 2));
@@ -124,10 +129,10 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
     const page = context.pages()[0] || (await context.newPage());
     // Use "load" not "networkidle" — Panopto has constant background analytics
     // traffic that prevents networkidle from ever firing
-    await page.goto(
-      CONFIG.panopto.baseUrl + CONFIG.panopto.subscriptionsPath,
-      { timeout: CONFIG.panopto.navigationTimeout, waitUntil: "load" },
-    );
+    await page.goto(subscriptionsUrl(), {
+      timeout: CONFIG.panopto.navigationTimeout,
+      waitUntil: "load",
+    });
 
     // The page uses hash-based routing (#isSubscriptionsPage=true) — the JS
     // renders the list asynchronously after page load. Wait specifically for
@@ -229,7 +234,7 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
       if (lectureExists(item.id)) continue;
 
       const courseCode = extractCourseCode(item.folderName, item.title);
-      const downloadUrl = CONFIG.panopto.downloadUrlTemplate.replace("{ID}", item.id);
+      const downloadUrl = buildDownloadUrl(item.id);
 
       newLectures.push({
         id: item.id,

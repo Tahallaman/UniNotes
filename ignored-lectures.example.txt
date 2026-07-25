@@ -1,0 +1,10 @@
+# Lectures to skip — copy this file to ignored-lectures.txt and edit.
+#
+# Paste the exact Panopto title, one per line. Lines starting with # and blank
+# lines are ignored. Matching is case-insensitive and whitespace-trimmed,
+# because these get copied by hand out of Panopto listings.
+#
+# The control panel writes to this file too: Library → select → Ignore.
+#
+# Example:
+# [109-B28] COMPSCI 732 L01C\COMPSCI 732 L02C - Fri 13 Mar 04:00 PM (NZT)

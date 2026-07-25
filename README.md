@@ -1,35 +1,21 @@
 # UniNotes
 
-Automated university lecture note pipeline. Polls Panopto for new lecture recordings, downloads them, and generates comprehensive study notes via Google Gemini — both the notes and the polish step.
+Turns lecture recordings into study notes. It watches your university's Panopto
+for new recordings, downloads them, and has Gemini write structured notes with
+timestamps — unattended, on a schedule if you want.
 
-## How it works
+Built for the University of Auckland, but Panopto is the same product everywhere:
+**set one URL and it works at any institution that uses Panopto.** Lectures that
+aren't on Panopto at all work too — drop the video in a folder.
 
 ```
-Panopto  →  Download  →  Gemini (notes)   →  lecture.raw.md
+Panopto  →  Download  →  Gemini (notes)    →  lecture.raw.md
                       →  Gemini (prettify) →  lecture.pretty.md
                                            →  TODO.md (action items)
 ```
 
-Each stage independently runs through **either** backend:
+Notes land in `Lectures/<CourseCode>/<LectureTitle>/`:
 
-| Backend | What it is | Trade-off |
-|---|---|---|
-| `browser` | Playwright driving gemini.google.com with your logged-in session | Free; slower; needs Edge running |
-| `api` | Gemini on Vertex AI via gcloud ADC | Billed; ~10x faster; parallelises cleanly |
-
-Set per stage in `config.ts` under `providers`, or override with `--uploader=` (notes) and `--pretty=` (pretty).
-
-For lectures not on Panopto, drop the video in `Incoming/<CourseCode>/` and run `npm run local` instead.
-
-Everything below is also available as buttons:
-
-```bash
-npm run gui     # → http://localhost:4571
-```
-
-See [Control panel](#control-panel).
-
-Notes are saved to `Lectures/<CourseCode>/<LectureTitle>/`:
 ```
 Lectures/
   COMPSCI 732/
@@ -39,40 +25,144 @@ Lectures/
       lecture.mp4         # original video (local lectures only)
 ```
 
-## Prerequisites
+Everything is available both as a CLI and as a local control panel
+(`npm run gui`). The panel is a launcher, not a second implementation — every
+button runs the command you'd otherwise type.
 
-- [Node.js](https://nodejs.org/) 20+
-- [ffmpeg](https://ffmpeg.org/) (for splitting long videos) — must be on PATH
-- Microsoft Edge (used by Playwright for Panopto and Gemini)
-- A University of Auckland Panopto account
-- A Google account with Gemini access
-- For the `api` backend: a billing-enabled GCP project and `gcloud auth application-default login`
+---
 
-## Verify your setup
+## Quick start
 
-Both backends have a probe that fails fast with a clear message instead of surfacing mid-run:
+### 1. Install
 
 ```bash
-npm run probe:vertex    # is gemini-3.6-flash reachable? (countTokens + a tiny generate)
-npm run probe:browser   # is the profile still signed in? do tabs run in parallel?
-```
-
-## Setup
-
-```bash
+git clone https://github.com/Tahallaman/UniNotes.git
+cd UniNotes
 npm install
+npm run setup        # downloads the Playwright browser driver for Edge
 ```
 
-### Authenticate browsers
+You also need [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`. Lectures
+longer than 15 minutes are split before upload, and that's what does the
+splitting.
 
-Panopto and Gemini each use a persistent Edge profile so you only need to log in once:
+<details>
+<summary>Installing ffmpeg</summary>
 
 ```bash
-npm run setup-auth:panopto   # opens Edge → log in to Panopto → close window
-npm run setup-auth:gemini    # opens Edge → log in to Google → close window
+winget install Gyan.FFmpeg      # Windows
+brew install ffmpeg             # macOS
+sudo apt install ffmpeg         # Debian/Ubuntu
 ```
 
-Sessions are saved to `browser-data/` (gitignored).
+Open a new terminal afterwards, then check with `ffmpeg -version`.
+</details>
+
+### 2. Tell it which Panopto
+
+This is the only value the tool cannot guess. It's the first part of the address
+you see while watching a recording:
+
+```
+https://yourschool.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=...
+^--------------- this much ---------------^
+```
+
+The regional suffix varies by institution — `.hosted.`, `.eu.`, `.au.`, `.ca.`
+Everything after the host is identical on every tenant, so the host is all you
+need. Set it in **any** of these ways:
+
+```bash
+npm run gui                                       # Settings → Institution → Panopto site
+```
+```ts
+// config.ts
+panopto: { baseUrl: "https://yourschool.hosted.panopto.com", ... }
+```
+```bash
+export UNINOTES_PANOPTO_URL=https://yourschool.hosted.panopto.com
+```
+
+The control panel is the easiest of the three: it writes `settings.json`, which
+is gitignored and merged over `config.ts` at load, so your setup never shows up
+in `git diff`.
+
+### 3. Sign in
+
+Panopto and Gemini each get a persistent Edge profile, so you log in by hand once:
+
+```bash
+npm run setup-auth:panopto   # opens Edge → complete your university SSO → close the window
+npm run setup-auth:gemini    # opens Edge → log in to Google → close the window
+```
+
+Sessions are saved to `browser-data/` (gitignored). If your institution uses
+2FA, you'll do it here and not again until the session expires.
+
+### 4. Check it works
+
+```bash
+npm run probe:browser   # is the profile signed in? do parallel tabs work?
+```
+
+Then run it:
+
+```bash
+npm run scan            # find new lectures, download nothing
+npm run dev             # the full pipeline: scan → download → notes → prettify
+```
+
+Or open the panel and press buttons:
+
+```bash
+npm run gui             # → http://localhost:4571
+```
+
+---
+
+## Two backends
+
+Each stage independently runs through **either** backend:
+
+| Backend | What it is | Trade-off |
+|---|---|---|
+| `browser` | Playwright driving gemini.google.com with your logged-in session | Free; slower; rate-limited by Google |
+| `api` | Gemini on Vertex AI via gcloud ADC | Billed; roughly 10× faster; parallelises cleanly |
+
+**`browser` is the default and needs no cloud account at all** — just a Google
+account with Gemini access. Start there.
+
+Set them per stage in `config.ts` under `providers`, in the control panel, or
+per-run with `--uploader=` (notes) and `--pretty=` (pretty).
+
+<details>
+<summary>Setting up the <code>api</code> backend</summary>
+
+You need a Google Cloud project with billing enabled, the Vertex AI and Cloud
+Storage APIs turned on, and local credentials:
+
+```bash
+gcloud auth application-default login
+```
+
+Then set the project ID (control panel → Settings → Google Cloud, or
+`vertex.project` in `config.ts`, or `GOOGLE_CLOUD_PROJECT`), and verify:
+
+```bash
+npm run probe:vertex    # countTokens + a tiny generate against the configured model
+```
+
+Video chunks are staged in a Cloud Storage bucket so Vertex can read them. Leave
+`vertex.gcsBucket` blank and it derives `uninotes-<project>` and creates it on
+first use — bucket names are globally unique, so deriving one from your project
+ID avoids a name collision with a stranger. Chunks are deleted after each part is
+processed.
+
+**This costs money.** A two-hour lecture is eight video segments through a Flash
+model. Check current Vertex pricing before running a semester's backlog.
+</details>
+
+---
 
 ## Control panel
 
@@ -91,9 +181,9 @@ Four tabs:
 
 | Tab | What's there |
 |---|---|
-| **Run** | Every pipeline action as a button, each labelled with the live count that decides whether it'll do anything ("3 videos in Incoming/", "5 lectures pending"). Health checks for ffmpeg, both browser sessions, gcloud ADC and the lock. Setup, probes, maintenance. Live console with cancel. |
+| **Run** | Every pipeline action, each labelled with the live count that decides whether it'll do anything ("3 videos in Incoming/", "5 lectures pending"). Health checks for ffmpeg, your Panopto site, both browser sessions and gcloud credentials. Setup, probes, maintenance. Live console with cancel. |
 | **Library** | Every lecture, filterable by course, status and text, plus "missing pretty only". Select any number and process, prettify, reset, ignore or forget them. Click one for details, resume state, links and a rendered preview of its notes. |
-| **Settings** | Providers, models, concurrency, timeouts, browser mode — with the ranges and the reasoning attached. |
+| **Settings** | Institution, providers, models, concurrency, timeouts, browser mode, Google Cloud — with the ranges and the reasoning attached. |
 | **Schedule** | Windows Task Scheduler entries, with presets for once/twice daily and hourly. |
 
 The library is a **union of the database and the disk**, so lecture folders with
@@ -124,21 +214,24 @@ npx tsx scripts/process-selected.ts --selection=sel.json --pretty-only
 # sel.json:  { "ids": ["<db id>", ...], "dirs": ["<lecture folder>", ...] }
 ```
 
+---
+
 ## Usage
 
 ### Run the full pipeline
 
 ```bash
 npm run dev
-```
-
-Scrapes Panopto for new lectures, downloads them, processes through Gemini, and generates pretty notes. Skips anything already processed.
-
-```bash
 npm run dev -- --retry      # also retry lectures that previously errored
 ```
 
+Scrapes Panopto for new lectures, downloads them, processes through Gemini, and
+generates pretty notes. Skips anything already processed.
+
 ### Process local videos (non-Panopto lectures)
+
+Nothing here is Panopto-specific — this path works for any video file, so
+recorded meetings, Zoom exports and downloaded lectures all go through it.
 
 1. Drop video files into `Incoming/<CourseCode>/`:
    ```
@@ -152,7 +245,7 @@ npm run dev -- --retry      # also retry lectures that previously errored
    npm run local -- --retry  # retry previously errored lectures
    ```
 
-The video is moved to `Lectures/<CourseCode>/<Title>/lecture.mp4` after processing.
+The video is moved to `Lectures/<CourseCode>/<Title>/lecture.mp4` afterwards.
 
 ### Prettify existing raw notes
 
@@ -167,6 +260,13 @@ npm run pretty -- --force            # regenerate even where pretty notes exist
 The main pipeline runs this same sweep automatically at the end of every run, so a
 pretty step that failed last night is retried tonight with no flags needed.
 
+### Skip lectures you don't want
+
+Copy `ignored-lectures.example.txt` to `ignored-lectures.txt` and paste titles
+into it, one per line — or use Library → select → Ignore in the control panel,
+which writes the same file. It's gitignored, since real lecture titles identify
+your courses.
+
 ### Export notes
 
 Copies notes into a flat `Exports/` tree for easy sharing or syncing:
@@ -177,52 +277,32 @@ npm run export -- --raw     # raw only
 npm run export -- --pretty  # pretty only
 ```
 
-Output structure:
 ```
 Exports/
   Raw/<CourseCode>/<LectureTitle>.md
   Pretty/<CourseCode>/<LectureTitle>.md
 ```
 
-## Vertex AI upload path
+### Scheduling
 
-By default, videos are uploaded through a Playwright-automated browser session at gemini.google.com. As an alternative, you can process videos through the **Vertex AI API** (Google Cloud) instead, using model `gemini-3.6-flash`. This avoids the browser entirely and is generally faster/more reliable, at the cost of Vertex AI usage charges.
+The control panel's **Schedule** tab drives Windows Task Scheduler directly, with
+presets for once daily, twice daily and hourly. On macOS or Linux, use cron:
 
-Select the mode with the `--uploader` flag (or the `UNINOTES_UPLOADER` env var):
-
-```bash
-npm run dev -- --uploader=api        # Panopto pipeline via Vertex AI
-npm run local -- --uploader=api      # local videos via Vertex AI
-
-npm run dev -- --uploader=browser    # explicit browser mode (also the default)
+```cron
+0 3 * * *  cd /path/to/UniNotes && npm run dev >> logs/cron.log 2>&1
 ```
 
-Resolution order: `--uploader=api|browser` CLI flag → `UNINOTES_UPLOADER` env var → default `browser`.
-
-### Prerequisites
-
-- A Google Cloud project with the Vertex AI API and Cloud Storage enabled, and billing/credits configured.
-- [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc) set up on this machine (`gcloud auth application-default login`) — the API path does not implement its own key handling.
-- Permission to create/use a GCS bucket in the target project (video chunks are staged there temporarily so Vertex can read them).
-
-### Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `UNINOTES_UPLOADER` | `config.ts: providers.notes` | `api` or `browser` for the notes stage |
-| `UNINOTES_PRETTY` | `config.ts: providers.pretty` | `api` or `browser` for the pretty stage |
-| `GOOGLE_CLOUD_PROJECT` | `config.ts: vertex.project` | GCP project ID used for Vertex AI + GCS |
-| `GOOGLE_CLOUD_LOCATION` | `global` | GCP region for Vertex AI + the GCS bucket |
-| `UNINOTES_GCS_BUCKET` | `config.ts: vertex.gcsBucket` | Bucket video chunks are uploaded to before calling Gemini |
-
-The bucket is created automatically (uniform access, region-matched) if it doesn't already exist. Uploaded video chunks are deleted from the bucket after each part is processed (controlled by `vertex.cleanupUploads` in `config.ts`, best-effort — failures are logged, not fatal).
+---
 
 ## Configuration
 
-All settings are in `config.ts`:
+Defaults live in `config.ts`, each with a comment explaining why it is what it
+is. Overrides go in `settings.json` (written by the control panel, gitignored) or
+in environment variables, which win over both.
 
 | Setting | Default | Description |
 |---|---|---|
+| `panopto.baseUrl` | *(unset)* | **Required.** Your institution's Panopto host |
 | `providers.notes` | `browser` | Backend for video → raw notes |
 | `providers.pretty` | `api` | Backend for raw → pretty notes |
 | `concurrency.lectures` | 3 | Lectures processed simultaneously |
@@ -237,15 +317,41 @@ All settings are in `config.ts`:
 | `browser.headless` | false | Run headless (verify with `npm run probe:browser` first) |
 | `browser.windowMode` | `offscreen` | `normal`, `offscreen`, or `hidden` — see below |
 | `browser.tabStaggerMs` | 2000 | Gap between starting one Gemini tab and the next (see Reliability) |
+| `courseCodePatterns` | 3 regexes | How a course code is recognised in a folder or title |
+| `vertex.project` | *(unset)* | GCP project — only needed by the `api` backend |
+| `vertex.gcsBucket` | *(derived)* | Blank derives `uninotes-<project>` and creates it |
 | `vertex.model` | `gemini-3.6-flash` | Model for video → notes |
 | `vertex.generation.pretty.model` | `gemini-3.6-flash` | Model for prettifying (thinking disabled) |
 | `vertex.location` | `global` | 3.x Flash models are only served on `global` |
 | `vertex.cleanupUploads` | true | Delete GCS video chunks after each part is processed |
-| `workspace.enabled` | true | Keep a second copy of each pretty note in another folder |
-| `workspace.root` | OneDrive path | Where that copy goes — `<Course>/Unsorted Lectures/` inside it |
+| `workspace.enabled` | false | Keep a second copy of each pretty note in another folder |
+| `workspace.root` | `~/Documents/UniNotes` | Where that copy goes — `<Course>/Unsorted Lectures/` inside it |
 
-**Setting every `concurrency` value to 1 reproduces the original fully-sequential
+**Setting every `concurrency` value to 1 reproduces fully-sequential
 behaviour** — the first thing to try when debugging.
+
+### Environment variables
+
+Every one of these overrides both `config.ts` and `settings.json`. See
+[`.env.example`](.env.example).
+
+| Variable | Description |
+|---|---|
+| `UNINOTES_PANOPTO_URL` | Your Panopto host |
+| `UNINOTES_UPLOADER` | `api` or `browser` for the notes stage |
+| `UNINOTES_PRETTY` | `api` or `browser` for the pretty stage |
+| `GOOGLE_CLOUD_PROJECT` | GCP project ID used for Vertex AI + GCS |
+| `GOOGLE_CLOUD_LOCATION` | Vertex region (default `global`) |
+| `UNINOTES_GCS_BUCKET` | Bucket video chunks are staged in |
+| `UNINOTES_GCS_BUCKET_LOCATION` | Bucket region — GCS rejects `global` |
+
+### Course codes
+
+Lectures are filed by course code, extracted from the Panopto folder name and
+title by the regexes in `courseCodePatterns`. The defaults match the common
+shapes (`COMPSCI 361`, `CS361`, `COMPSCI-361`, `361 COMPSCI`). If your
+institution numbers courses differently, add a pattern — first match wins, and
+anything unmatched is filed under `UNSORTED`.
 
 ### Keeping the browser out of your way
 
@@ -258,6 +364,8 @@ behaviour** — the first thing to try when debugging.
 Google blocks *sign-in* from headless browsers, but `browser-data/gemini` is already
 authenticated, so `headless: true` may work for normal runs. Confirm with
 `npm run probe:browser --headless` before switching it on.
+
+---
 
 ## Reliability
 
@@ -292,12 +400,30 @@ by the model because the offset is a known constant and a model that miscounts p
 a plausible-looking wrong timestamp nothing downstream can catch. Clock times
 ("9:00 AM") and ratios ("3:1") are left alone.
 
+---
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `No Panopto site configured` | Step 2 of the quick start — set `panopto.baseUrl`. |
+| `No Google Cloud project configured` | A stage is set to `api` without a project. Switch it to `browser` or set `vertex.project`. |
+| Scraping finds nothing | Panopto only lists lectures you're *subscribed* to. Check the Subscriptions page in your browser first. |
+| `waitForSelector("input-area-v2") timed out` | Usually Google's "unusual traffic" check — open Gemini in `browser-data/gemini` manually and clear it. See Reliability. |
+| Notes stop mid-lecture | `gemini.responseTimeout`. Long segments on a busy day can exceed 5 minutes. |
+| Everything is filed under `UNSORTED` | No `courseCodePatterns` regex matched. See Course codes. |
+| Pipeline says it's already running | A stale lock from a killed process. Control panel → Run → Clear lock. |
+
+Logs are in `logs/`, one file per day.
+
+---
+
 ## Project structure
 
 ```
 src/
   main.ts              # Panopto pipeline entry point
-  panopto/             # scraper + downloader
+  panopto/             # scraper, downloader, URL builders
   gemini/              # uploader, prompter, prompts, browser pool, Vertex client
   notes/               # parser, writer, prettifier
   db/                  # SQLite schema + tracker
@@ -316,16 +442,13 @@ scripts/
   probe-vertex.ts      # verify the Vertex model is reachable
   probe-browser.ts     # verify Gemini sign-in + concurrent tabs
   export-notes.ts      # export to Exports/
-  migrate-to-subfolders.ts  # one-time migration (already run)
 prompts/
-  pretty-notes.txt     # prettifier formatting rules (11 rules)
+  pretty-notes.txt     # prettifier formatting rules
 docs/
   gui-design.md        # control panel scoping + wireframes
 ```
 
-## Database
-
-Processing state is tracked in `uninotes.db` (SQLite, gitignored). Lectures progress through statuses:
+Processing state is tracked in `uninotes.db` (SQLite, gitignored):
 
 ```
 new → downloading → downloaded → processing → processed → complete
@@ -333,3 +456,42 @@ new → downloading → downloaded → processing → processed → complete
 ```
 
 Use `--retry` flags to reset errored lectures back into the pipeline.
+
+---
+
+## Your data stays yours
+
+Nothing in this repository is your coursework. `Lectures/`, `Incoming/`,
+`Exports/`, `ignored-lectures.txt`, `settings.json`, `browser-data/`,
+`uninotes.db` and `logs/` are all gitignored, so notes, real lecture titles,
+session cookies and your own configuration never end up in a commit.
+
+Videos and notes are sent to Google — via your signed-in Gemini session on the
+`browser` backend, or Vertex AI on the `api` backend. Lecture recordings are
+usually your institution's copyright and may contain other students' voices and
+names. Check what your institution's policy allows before running this on
+anything, and think twice before publishing the output.
+
+## Platform support
+
+Developed and tested on Windows 11. The pipeline itself is portable, but two
+things are Windows-only: the **Schedule** tab (Windows Task Scheduler) and
+`browser.windowMode: "hidden"` (a Win32 call). Use cron and `offscreen` or
+`normal` elsewhere. Patches welcome.
+
+## Contributing
+
+Issues and pull requests are welcome. Two things to know before you open one:
+
+- `npm run typecheck` must pass. There is no test suite; the probes
+  (`npm run probe:browser`, `npm run probe:vertex`) are how the external
+  dependencies get verified.
+- Comments here explain *why*, not *what*. If a value or an approach is
+  non-obvious, the reason it was chosen is the useful half.
+
+Never include real lecture content, titles, or Panopto URLs in an issue,
+a test fixture, or a commit.
+
+## License
+
+[MIT](LICENSE).
