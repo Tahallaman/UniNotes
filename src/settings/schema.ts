@@ -13,7 +13,13 @@
  * Kept free of imports (config.ts loads it) so there is no cycle.
  */
 
-export type SettingType = "enum" | "int" | "bool" | "text";
+/**
+ * "prompt" is "text" that spans many lines: same validation, a textarea instead
+ * of a one-line box. Separate rather than a flag on "text" because the two
+ * differ in what a value even is — a host or a bucket name is a token with no
+ * interior whitespace, a prompt is prose whose line breaks are load-bearing.
+ */
+export type SettingType = "enum" | "int" | "bool" | "text" | "prompt";
 
 export interface SettingField {
   /** Dotted path into CONFIG, e.g. "concurrency.parts". */
@@ -275,6 +281,38 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     help: "Gap between starting one Gemini tab and the next. Raise it if Google serves the \"unusual traffic\" check; 0 disables staggering.",
   },
 
+  // ── Prompts ─────────────────────────────────────────────────────────────
+  // Only the parts no code parses. The timestamp contract and the
+  // ---JSON-ACTIONS--- block stay in src/gemini/prompts.ts: an edit to either
+  // wouldn't fail, it would quietly yield wrong timestamps or no action items.
+  {
+    path: "prompts.grounding",
+    label: "Grounding rules",
+    group: "Prompts",
+    type: "prompt",
+    caution:
+      "This is what keeps notes tied to the recording. Asked about a named course with nothing to go on, the model writes a plausible syllabus instead of reporting that it saw nothing.",
+    help: "Opens every notes prompt, before the lecture title and part number. Default: prompts/notes-grounding.txt.",
+  },
+  {
+    path: "prompts.coverage",
+    label: "What to cover",
+    group: "Prompts",
+    type: "prompt",
+    help:
+      "What the notes should contain and in what style, shared by the single-video, middle-part and final-part prompts. " +
+      "The timestamp rules and the structured-data block are appended after this automatically. Default: prompts/notes-coverage.txt.",
+  },
+  {
+    path: "prompts.prettyRules",
+    label: "Prettifier rules",
+    group: "Prompts",
+    type: "prompt",
+    help:
+      "Applied to finished raw notes to produce lecture.pretty.md. Safe to rewrite wholesale — nothing downstream parses the result. " +
+      "The YAML frontmatter is re-attached by code, so a rule about preserving it is redundant. Default: prompts/pretty-notes.txt.",
+  },
+
   // ── Second copy ─────────────────────────────────────────────────────────
   {
     path: "workspace.enabled",
@@ -340,6 +378,20 @@ export function coerce(field: SettingField, raw: unknown): CoercionResult {
       // A blank enum means "unset" — store undefined so config.ts keeps its default
       // rather than passing an empty string down to the SDK.
       return { ok: true, value: s === "" ? undefined : s };
+    }
+
+    case "prompt": {
+      // Normalise the line endings a textarea submits, so a prompt edited on
+      // Windows doesn't differ from its file default by \r on every line and
+      // read as "changed from default" when nothing was changed.
+      const s = String(raw ?? "").replace(/\r\n/g, "\n").trim();
+      if (s.length === 0) return { ok: false, error: `${field.path}: cannot be empty` };
+      // Generous, but not unbounded: settings.json is read at the start of every
+      // command, and a runaway paste shouldn't be carried into every prompt.
+      if (s.length > 20_000) {
+        return { ok: false, error: `${field.path}: too long (${s.length} characters, limit 20000)` };
+      }
+      return { ok: true, value: s };
     }
 
     case "text": {

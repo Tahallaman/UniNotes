@@ -852,6 +852,18 @@ function renderSetting(field) {
     if (field.path === "segmentSeconds") {
       control.append(el("span", { class: "set-help", text: `${Math.round(Number(value) / 60)} minutes` }));
     }
+  } else if (field.type === "prompt") {
+    // Committed on blur, not per keystroke: setDraft re-renders the whole form,
+    // which on a textarea would put the caret back at the end after every letter.
+    const area = el("textarea", { class: "field field-grow prompt-box" });
+    // Sized to the prompt rather than fixed: a six-line grounding block in a
+    // fourteen-row box is mostly empty, and a twenty-five-rule prettifier list in
+    // one is a third visible. Clamped at both ends, and still resizable by hand.
+    area.rows = Math.min(24, Math.max(8, String(value ?? "").split("\n").length + 2));
+    area.spellcheck = false;
+    area.value = value ?? "";
+    area.addEventListener("change", () => setDraft(field.path, area.value));
+    control.append(area);
   } else {
     const input = el("input", { class: "field field-grow" });
     input.type = "text";
@@ -865,7 +877,7 @@ function renderSetting(field) {
   }
 
   if (inactive) {
-    control.querySelectorAll("input, select, button").forEach((node) => { node.disabled = true; });
+    control.querySelectorAll("input, select, button, textarea").forEach((node) => { node.disabled = true; });
   }
 
   wrap.append(control);

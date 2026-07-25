@@ -1,0 +1,7 @@
+- All concepts the lecturer explains, with their exact wording where notable
+- Definitions, theorems, formulas, or frameworks as stated by the lecturer
+- All examples and demonstrations shown, described concretely
+- Any diagrams or slides (represent as text/ASCII)
+- Direct quotes for important or memorable statements
+
+Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.

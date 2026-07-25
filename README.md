@@ -438,9 +438,31 @@ in environment variables, which win over both.
 | `vertex.cleanupUploads` | true | Delete GCS video chunks after each part is processed |
 | `workspace.enabled` | false | Keep a second copy of each pretty note in another folder |
 | `workspace.root` | `~/Documents/UniNotes` | Where that copy goes — `<Course>/Unsorted Lectures/` inside it |
+| `prompts.grounding` | `prompts/notes-grounding.txt` | Opens every notes prompt — see Prompts |
+| `prompts.coverage` | `prompts/notes-coverage.txt` | What the notes should contain |
+| `prompts.prettyRules` | `prompts/pretty-notes.txt` | The prettifier's formatting rules |
 
 **Setting every `concurrency` value to 1 reproduces fully-sequential
 behaviour** — the first thing to try when debugging.
+
+### Prompts
+
+The parts of each prompt that are safe to rewrite are settings. Edit them in the
+control panel under **Settings → Prompts**, or edit the files in `prompts/`
+directly — the files are the defaults and the panel overrides them.
+
+| Prompt | Does what |
+|---|---|
+| **Grounding rules** | Prepended to every notes prompt. This is the anti-invention instruction — it's what makes the model describe *this* recording instead of reciting what it knows about a course with that name. |
+| **What to cover** | The contents and style of the notes, shared by the single-video, middle-part and final-part prompts. |
+| **Prettifier rules** | Applied to finished raw notes. Safe to rewrite wholesale — nothing downstream parses the result. |
+
+Two pieces of every notes prompt are deliberately **not** settings and stay in
+`src/gemini/prompts.ts`: the timestamp contract, because
+`src/utils/timestamps.ts` rebases what it produces, and the
+`---JSON-ACTIONS---` block, because `src/notes/parser.ts` reads it. An edit that
+broke either wouldn't fail — it would quietly produce notes with wrong
+timestamps or no action items, which is not a thing to leave one text box away.
 
 ### Environment variables
 
@@ -589,10 +611,13 @@ scripts/
   test-timestamps.ts   # regression test for timestamp rebasing
   test-blank-detect.ts # regression test for blank-segment detection
   export-notes.ts      # export to Exports/
-prompts/
+prompts/               # the editable prompt defaults — see Configuration → Prompts
+  notes-grounding.txt  # "watch the video, don't invent"
+  notes-coverage.txt   # what the notes should contain
   pretty-notes.txt     # prettifier formatting rules
 docs/
   gui-design.md        # control panel scoping + wireframes
+  images/              # control panel screenshots used by this README
 ```
 
 Processing state is tracked in `uninotes.db` (SQLite, gitignored):

@@ -1,13 +1,20 @@
-/**
- * Preamble added to every prompt that forces Gemini to watch the video
- * and ground its notes in actual content rather than training-data knowledge.
- */
-const VIDEO_GROUNDING_PREAMBLE = `Watch the lecture video I have shared with you from beginning to end before writing anything.
+import { CONFIG } from "../../config.js";
 
-Your notes must be grounded exclusively in what the lecturer actually says and shows in this specific recording:
-- Quote the lecturer directly for important definitions or memorable statements
-- Describe actual examples, demos, or diagrams as they appear on screen
-- Do NOT include any information that was not explicitly covered in this video — no additions from outside knowledge`;
+/**
+ * The two halves of a notes prompt a user is allowed to rewrite, from
+ * CONFIG.prompts (defaults in prompts/notes-*.txt, overridable in Settings).
+ *
+ * `grounding` is the preamble that forces Gemini to watch the video and ground
+ * its notes in this recording rather than in what it already knows about the
+ * topic — for a named course it can recite a plausible syllabus fluently and
+ * wrongly. `coverage` is what the notes should contain and in what style.
+ *
+ * Everything else below stays in code: TIMESTAMP_FORMAT is rebased by
+ * src/utils/timestamps.ts and the JSON-ACTIONS block is read by
+ * src/notes/parser.ts, so an edit to either would break parsing silently.
+ */
+const grounding = (): string => CONFIG.prompts.grounding;
+const coverage = (): string => CONFIG.prompts.coverage;
 
 /**
  * Pins the timestamp format so timestamps can be rebased mechanically.
@@ -51,20 +58,15 @@ export function buildPromptMiddlePart(
   partNum: number,
   totalParts: number,
 ): string {
-  return `${VIDEO_GROUNDING_PREAMBLE}
+  return `${grounding()}
 
 This is part ${partNum} of ${totalParts} of a lecture video. The lecture is titled "${lectureTitle}" from ${courseCode}.
 
 Write comprehensive Markdown study notes covering everything in this segment:
 
-- All concepts the lecturer explains, with their exact wording where notable
-- Definitions, theorems, formulas, or frameworks as stated by the lecturer
-- All examples and demonstrations shown, described concretely
-- Any diagrams or slides (represent as text/ASCII)
+${coverage()}
 
 ${TIMESTAMP_FORMAT}
-
-Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.
 
 More segments of this lecture will follow. Write notes for this segment only.`;
 }
@@ -79,7 +81,7 @@ export function buildPromptFinalPart(
   partNum: number,
   totalParts: number,
 ): string {
-  return `${VIDEO_GROUNDING_PREAMBLE}
+  return `${grounding()}
 
 This is the FINAL part (${partNum} of ${totalParts}) of the lecture "${lectureTitle}" from ${courseCode}.
 
@@ -89,15 +91,9 @@ Please provide TWO parts in your response:
 
 Write comprehensive Markdown study notes for this final segment, continuing from where previous parts left off:
 
-- All concepts the lecturer explains in this segment
-- Definitions, formulas, or frameworks as stated by the lecturer
-- All examples and demonstrations, described concretely
-- Any diagrams or slides (represent as text/ASCII)
-- Direct quotes for important statements
+${coverage()}
 
 ${TIMESTAMP_FORMAT}
-
-Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.
 
 ## PART 2: Structured Data for the Complete Lecture
 
@@ -121,7 +117,7 @@ IMPORTANT:
  * Build the prompt sent to Gemini after uploading a single (unsplit) lecture video.
  */
 export function buildPrompt(lectureTitle: string, courseCode: string): string {
-  return `${VIDEO_GROUNDING_PREAMBLE}
+  return `${grounding()}
 
 This lecture video is titled "${lectureTitle}" from ${courseCode}.
 
@@ -129,18 +125,11 @@ Please provide TWO parts in your response:
 
 ## PART 1: Comprehensive Study Notes
 
-Write extensive Markdown study notes covering everything the lecturer actually discusses:
+Write extensive Markdown study notes covering everything the lecturer actually discusses. This is the whole recording rather than a segment of one, so open with a title and an overview of the topics it covers, then cover:
 
-- A title and overview of the topics covered in this specific recording
-- All concepts explained, with the lecturer's exact wording where notable
-- Definitions, theorems, formulas, or frameworks as stated by the lecturer
-- All examples and demonstrations shown, described concretely
-- Any diagrams or slides (represent as text/ASCII)
-- Direct quotes for important or memorable statements
+${coverage()}
 
 ${TIMESTAMP_FORMAT}
-
-Use proper Markdown: headings (##, ###), bullet points, bold for key terms, code blocks where appropriate.
 
 ## PART 2: Structured Data
 

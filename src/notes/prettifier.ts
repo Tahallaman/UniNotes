@@ -31,12 +31,23 @@ const BROWSER_INSTRUCTION =
   "Output ONLY the polished markdown, nothing else. Do not add commentary before or after. " +
   FRONTMATTER_INSTRUCTION;
 
+/**
+ * The formatting rules, from CONFIG (default: prompts/pretty-notes.txt, editable
+ * in the control panel under Settings → Prompts).
+ *
+ * Blank means the file is missing and no override was set. Refused rather than
+ * sent, because a prettify prompt with no rules in it returns a rewrite of the
+ * notes with none of the structure that is the entire point of the stage.
+ */
 function readRules(): string {
-  const promptsFile = path.join(CONFIG.paths.prompts, "pretty-notes.txt");
-  if (!fs.existsSync(promptsFile)) {
-    throw new Error(`Pretty-notes prompt file not found: ${promptsFile}`);
+  const rules = CONFIG.prompts.prettyRules.trim();
+  if (rules.length === 0) {
+    throw new Error(
+      `No prettifier rules: ${path.join(CONFIG.paths.prompts, "pretty-notes.txt")} is missing ` +
+        `and prompts.prettyRules is not set in settings.json.`,
+    );
   }
-  return fs.readFileSync(promptsFile, "utf-8");
+  return rules;
 }
 
 /**

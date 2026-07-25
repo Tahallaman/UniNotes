@@ -320,6 +320,22 @@ main { padding-bottom: 5rem; }
 .set-help { grid-column: 2; color: var(--muted); font-size: var(--s-1); max-width: 52ch; }
 .set-help.caution { color: var(--busy); }
 
+/* A prompt is prose the model reads literally, so it gets the same monospace the
+   panel uses everywhere else for machine-facing text: the line breaks and the
+   leading "- " of a bullet are part of the value, not decoration. Resizable
+   because how much you want on screen depends entirely on whether you're
+   skimming it or rewriting it. */
+.prompt-box {
+  width: 100%; font-family: var(--mono); font-size: var(--s-1); line-height: 1.55;
+  resize: vertical; min-height: 8rem;
+  /* Grow to fit the text, so no prompt sits in a box a third its size. Chromium
+     only; elsewhere the rows attribute (set from the line count) is the
+     fallback, which is close enough — soft wrapping is all it misses. */
+  field-sizing: content; max-height: 34rem;
+}
+/* Baseline alignment would drop the label to the last line of a 14-row box. */
+.set:has(.prompt-box) { align-items: start; }
+
 .toggle { display: inline-flex; border: 1px solid var(--line-firm); border-radius: 5px; overflow: hidden; }
 .toggle button {
   appearance: none; border: 0; background: var(--raised); color: var(--muted);

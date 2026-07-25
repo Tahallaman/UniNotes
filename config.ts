@@ -1,9 +1,29 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyUserSettings } from "./src/settings/overlay.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * A prompt default that lives in prompts/ rather than inline.
+ *
+ * Long prose is far more reviewable as a text file than as an escaped template
+ * literal, and editing it there still works exactly as it did before this became
+ * a setting — the file is the default, and settings.json overrides it.
+ *
+ * Never throws: config.ts is imported by every command, so a missing prompt file
+ * must not stop a scan or a download. The stage that needs the text reports the
+ * blank itself, by name.
+ */
+function promptFile(name: string): string {
+  try {
+    return fs.readFileSync(path.join(__dirname, "prompts", name), "utf-8").trim();
+  } catch {
+    return "";
+  }
+}
 
 /**
  * The defaults, in reviewable source with the reasoning attached.
@@ -174,6 +194,42 @@ export const DEFAULTS = {
     responseTimeout: 10 * 60_000,
     /** Timeout for video upload + Gemini processing confirmation (ms) */
     uploadTimeout: 30 * 60_000,
+  },
+
+  /**
+   * The editable halves of the prompts, defaulting to the files in prompts/.
+   *
+   * Only the parts that are safe to rewrite are here. Two pieces of every notes
+   * prompt are deliberately NOT settings and stay in src/gemini/prompts.ts:
+   *
+   *   - the timestamp contract, because src/utils/timestamps.ts rebases what it
+   *     produces, and
+   *   - the ---JSON-ACTIONS--- block, because src/notes/parser.ts reads it.
+   *
+   * Both are parsed by code. A prompt edit that broke either would not fail — it
+   * would quietly produce notes with wrong timestamps or no action items, which
+   * is the worst kind of thing to leave one text box away.
+   */
+  prompts: {
+    /**
+     * Prepended to every notes prompt. This is the anti-invention instruction:
+     * it is what makes the model describe the recording rather than recite what
+     * it already knows about the topic, which for a named course it can do
+     * fluently and wrongly.
+     */
+    grounding: promptFile("notes-grounding.txt"),
+    /**
+     * What the notes should contain, and in what style. The framing around it
+     * ("this is part 3 of 8 of ...") is built per-variant in code, so this text
+     * is shared by the single-video, middle-part and final-part prompts.
+     */
+    coverage: promptFile("notes-coverage.txt"),
+    /**
+     * The prettifier's rules, applied to finished raw notes. Nothing downstream
+     * parses the result beyond the YAML frontmatter, which the prettifier
+     * re-attaches itself — so this one is safe to rewrite wholesale.
+     */
+    prettyRules: promptFile("pretty-notes.txt"),
   },
 
   /** Course code extraction — tried in order, first match wins */
