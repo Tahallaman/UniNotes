@@ -21,23 +21,34 @@ export function writeNotes(opts: WriteNotesOptions): string {
   const courseDir = path.join(CONFIG.paths.lectures, opts.courseCode);
   const sanitized = sanitizeFilename(opts.title);
 
-  let lectureDir = path.join(courseDir, sanitized);
+  const lectureDir = path.join(courseDir, sanitized);
+  const filePath = path.join(lectureDir, "lecture.raw.md");
 
-  // Handle duplicates — append (1), (2), etc. if folder already has a raw file
-  let counter = 1;
-  while (
-    fs.existsSync(lectureDir) &&
-    fs.existsSync(path.join(lectureDir, "lecture.raw.md"))
-  ) {
-    lectureDir = path.join(courseDir, `${sanitized} (${counter})`);
-    counter++;
+  // Reprocessing the same lecture used to fork into "<title> (1)", "(2)", …
+  // That reads like caution, but it is the opposite: you end up with two sets of
+  // notes for one lecture, differing in content, with nothing to say which is
+  // authoritative — and the stale pretty file next to the old raw stays behind
+  // to be exported and synced as though it were current.
+  //
+  // The lecture title *is* the identity here, so a rerun replaces. The previous
+  // raw notes are kept alongside as .raw.md.bak, which is enough to diff against
+  // when a rerun produces something worse than what it replaced.
+  if (fs.existsSync(filePath)) {
+    const backup = `${filePath}.bak`;
+    fs.copyFileSync(filePath, backup);
+    log.info(`Replacing existing notes; previous raw kept at ${path.basename(backup)}`);
+
+    // The old pretty file describes the notes we just replaced. Leaving it would
+    // pair new raw notes with a stale prettified copy — and the pretty file is
+    // the one that gets exported and synced.
+    const stalePretty = path.join(lectureDir, "lecture.pretty.md");
+    if (fs.existsSync(stalePretty)) fs.rmSync(stalePretty, { force: true });
   }
 
   fs.mkdirSync(lectureDir, { recursive: true });
 
   const frontmatter = buildFrontmatter(opts);
   const content = `${frontmatter}\n${opts.markdown}\n`;
-  const filePath = path.join(lectureDir, "lecture.raw.md");
 
   fs.writeFileSync(filePath, content, "utf-8");
   log.info(`Raw notes saved: ${filePath}`);

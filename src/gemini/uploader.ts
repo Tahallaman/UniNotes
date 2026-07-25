@@ -25,26 +25,135 @@ export { authGemini } from "./browserPool.js";
  * Phase 2 — progressbar disappears: file fully transferred to Google's servers.
  * Phase 3 — gem-icon-button wrapper aria-disabled="false": video processed.
  */
-async function waitForVideoReady(page: Page, timeout: number, ctx?: LogContext): Promise<void> {
+/**
+ * Raised when the composer never showed the file we just handed it.
+ *
+ * Fatal on purpose. Sending the prompt without the video does not fail — Gemini
+ * answers the prompt from its text alone, and since the prompt names the course
+ * and the part number, it answers *plausibly*. Those invented notes then pass
+ * every downstream check, get written to lecture.raw.md, prettified, and synced.
+ * A loud failure costs a retry; a silent one costs you a lecture you believe you
+ * have. Observed 2026-07-25: all eight parts of a 2-hour lecture were fabricated
+ * this way and the run reported zero errors.
+ */
+export class AttachmentNotConfirmedError extends Error {
+  constructor(fileName: string, diagnostics: string) {
+    super(
+      `Gemini never showed "${fileName}" as an attachment, so the prompt would ` +
+        `have been sent without it — and Gemini answers anyway, inventing content ` +
+        `from the prompt. Refusing to continue. Composer state: ${diagnostics}`,
+    );
+    this.name = "AttachmentNotConfirmedError";
+  }
+}
+
+/**
+ * Is a file currently attached to the composer?
+ *
+ * Returns the signal that matched, or null.
+ *
+ * Deliberately broad, and deliberately *not* reliant on one class name. Gemini's
+ * chip markup has changed twice already, and the previous single-selector check
+ * silently degraded to "no chip found, carry on" rather than failing — which is
+ * how fabricated notes got written. The filename fallback is the durable one:
+ * whatever the chip is called this month, it displays the file's name.
+ */
+export async function detectAttachment(page: Page, fileName: string): Promise<string | null> {
+  return page
+    .evaluate((name) => {
+      const area = document.querySelector("input-area-v2") ?? document.body;
+      const selectors = [
+        '[aria-label*="Remove file"]',
+        '[aria-label*="Remove attachment"]',
+        '[aria-label*="Cancel upload"]',
+        "file-attachment-chip",
+        "attachment-chip",
+        "uploader-file-preview",
+        "uploader-file-preview-container",
+        '[class*="file-chip"]',
+        '[class*="attachment-chip"]',
+        '[data-test-id*="file-preview"]',
+      ];
+      for (const selector of selectors) {
+        if (area.querySelector(selector)) return selector;
+      }
+
+      // The name minus its extension. The chip elides the middle of a long name
+      // ("19a08448-e94d-442c-bf5…part3.mp4"), so match a short leading probe
+      // rather than the whole stem. 12 characters is well inside where the
+      // ellipsis lands and still distinctive — and no prompt template contains a
+      // filename, so composer text can only carry one if a file is displayed.
+      const stem = name.replace(/\.[^.]+$/, "");
+      const probe = stem.slice(0, 12);
+      if (probe.length >= 8 && (area.textContent ?? "").includes(probe)) {
+        return "filename-in-composer";
+      }
+      return null;
+    }, fileName)
+    .catch(() => null);
+}
+
+/** Small dump of what the composer actually contained, for the failure message. */
+async function attachmentDiagnostics(page: Page): Promise<string> {
+  return page
+    .evaluate(() => {
+      const area = document.querySelector("input-area-v2");
+      return JSON.stringify({
+        hasInputArea: !!area,
+        text: (area?.textContent ?? "").trim().slice(0, 160),
+        progressbars: document.querySelectorAll('[role="progressbar"]').length,
+        dialogs: document.querySelectorAll('[role="dialog"]').length,
+      });
+    })
+    .catch(() => "unavailable");
+}
+
+/**
+ * Wait for Gemini to finish uploading AND processing a file.
+ *
+ * Phase 1 — the attachment is actually present. HARD: see AttachmentNotConfirmedError.
+ * Phase 2 — progressbar disappears: file fully transferred to Google's servers.
+ * Phase 3 — send button enabled: video processed server-side.
+ *
+ * Phase 3 alone proves nothing, which is the trap this function used to fall
+ * into: Gemini enables the send button as soon as the composer holds *text*,
+ * attachment or not. It can't distinguish "video ready" from "no video".
+ */
+async function confirmAttachment(
+  page: Page,
+  fileName: string,
+  timeout: number,
+  ctx?: LogContext,
+): Promise<void> {
+  // Polled rather than waited on with a single selector, so any one of the
+  // signals can satisfy it and a markup change can't silently disable the check.
+  const deadline = Date.now() + timeout;
+  let signal: string | null = null;
+  while (Date.now() < deadline) {
+    signal = await detectAttachment(page, fileName);
+    if (signal) break;
+    await page.waitForTimeout(1_000);
+  }
+
+  if (!signal) {
+    if (CONFIG.browser.debugScreenshots) {
+      await page.screenshot({ path: debugScreenshotPath(`no-attachment-${fileName}`) }).catch(() => {});
+    }
+    throw new AttachmentNotConfirmedError(fileName, await attachmentDiagnostics(page));
+  }
+  log.info(`Attachment confirmed (${signal}).`, ctx);
+}
+
+async function waitForVideoReady(
+  page: Page,
+  timeout: number,
+  fileName: string,
+  ctx?: LogContext,
+): Promise<void> {
   const deadline = Date.now() + timeout;
 
-  // Phase 1: best-effort — detect file chip or attachment anywhere on the page.
-  // The exact selector varies across UI versions; soft-fail so Phase 3 can still complete.
-  try {
-    await page.waitForFunction(
-      () =>
-        !!document.querySelector('[aria-label*="Remove file"]') ||
-        !!document.querySelector('[aria-label*="Cancel upload"]') ||
-        !!document.querySelector('file-attachment-chip') ||
-        !!document.querySelector('attachment-chip') ||
-        !!document.querySelector('[class*="file-chip"]'),
-      undefined,
-      { timeout: 10_000 },
-    );
-    log.info("Upload chip visible.", ctx);
-  } catch {
-    log.warn("Upload chip not detected — proceeding to wait for upload completion via send button.", ctx);
-  }
+  // Phase 1: the file must appear in the composer.
+  await confirmAttachment(page, fileName, 60_000, ctx);
 
   // Phase 2: wait for any upload progressbar to appear and then disappear.
   // First check if one appears within 5 s; if not, skip this phase entirely.
@@ -64,6 +173,14 @@ async function waitForVideoReady(page: Page, timeout: number, ctx?: LogContext):
   // Phase 3: send button enabled = video fully processed.
   await waitForSendEnabled(page, deadline - Date.now());
   log.info("Video ready — send button enabled.", ctx);
+
+  // Re-check: the chip can vanish if the upload is rejected server-side (too
+  // large, unsupported codec) after it first appeared. The send button comes
+  // back regardless, so without this the rejection reads as success.
+  const stillAttached = await detectAttachment(page, fileName);
+  if (!stillAttached) {
+    throw new AttachmentNotConfirmedError(fileName, await attachmentDiagnostics(page));
+  }
 }
 
 /**
@@ -95,31 +212,52 @@ export async function waitForSendEnabled(page: Page, timeout: number): Promise<v
  *   Picker button: button[aria-label^="Open mode picker"]  (shows current model as text)
  *   Menu items:    gem-menu-item[role="menuitem"]  (text e.g. "3.5 Flash", "3.1 Pro")
  */
-async function selectGeminiModel(page: Page, modelName: string): Promise<void> {
-  try {
-    const pickerBtn = page.locator('button[aria-label^="Open mode picker"]');
-    await pickerBtn.waitFor({ state: "visible", timeout: 5_000 });
+async function selectGeminiModel(page: Page, modelName: string, ctx?: LogContext): Promise<void> {
+  // Retried, because the observed failure was the picker being transiently
+  // *hidden* while the tab was still hydrating — "15 x locator resolved to
+  // hidden" — not absent. One more look a second later usually finds it.
+  const ATTEMPTS = 3;
+  let lastError: unknown;
 
-    // Skip if already selected (button text contains the model name)
-    const currentLabel = await pickerBtn.getAttribute("aria-label") ?? "";
-    if (currentLabel.toLowerCase().includes(modelName.toLowerCase())) {
-      log.info(`Model already set to "${modelName}", skipping picker.`);
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    try {
+      const pickerBtn = page.locator('button[aria-label^="Open mode picker"]');
+      await pickerBtn.waitFor({ state: "visible", timeout: 5_000 });
+
+      // Skip if already selected (button label contains the model name)
+      const currentLabel = (await pickerBtn.getAttribute("aria-label")) ?? "";
+      if (currentLabel.toLowerCase().includes(modelName.toLowerCase())) {
+        log.info(`Model already set to "${modelName}", skipping picker.`, ctx);
+        return;
+      }
+
+      log.info(`Selecting Gemini model: ${modelName}`, ctx);
+      await pickerBtn.click();
+
+      const modelItem = page
+        .locator('gem-menu-item[role="menuitem"]')
+        .filter({ hasText: new RegExp(modelName.replace(".", "\\."), "i") })
+        .first();
+      await modelItem.waitFor({ state: "visible", timeout: 5_000 });
+      await modelItem.click();
+      log.info(`Model "${modelName}" selected.`, ctx);
       return;
+    } catch (err) {
+      lastError = err;
+      if (attempt < ATTEMPTS) await page.waitForTimeout(1_500);
     }
-
-    log.info(`Selecting Gemini model: ${modelName}`);
-    await pickerBtn.click();
-
-    const modelItem = page
-      .locator('gem-menu-item[role="menuitem"]')
-      .filter({ hasText: new RegExp(modelName.replace(".", "\\."), "i") })
-      .first();
-    await modelItem.waitFor({ state: "visible", timeout: 5_000 });
-    await modelItem.click();
-    log.info(`Model "${modelName}" selected.`);
-  } catch (err) {
-    log.warn(`Could not select model "${modelName}" — proceeding with current default. (${err})`);
   }
+
+  // Previously a warning, and the run continued on whatever model happened to be
+  // selected. That silently splits one lecture across two models — parts written
+  // by different models, with no record of which — and the resulting notes look
+  // exactly as authoritative as the rest. Better to fail and let the retry that
+  // wraps this call try again.
+  throw new Error(
+    `Could not select Gemini model "${modelName}" after ${ATTEMPTS} attempts. ` +
+      `Continuing would run this part on an unknown model. ` +
+      `If the picker label has changed, update selectGeminiModel(). (${lastError})`,
+  );
 }
 
 /**
@@ -200,7 +338,7 @@ export async function uploadFileToGemini(
   // unserialised is what makes the tab pool actually parallel.
 
   // Select the desired model before uploading
-  await selectGeminiModel(page, CONFIG.gemini.model);
+  await selectGeminiModel(page, CONFIG.gemini.model, ctx);
 
   // Step 1: Open the upload file menu
   const uploadMenuBtn = page.locator('button[aria-label="Upload & tools"]');
@@ -231,8 +369,12 @@ export async function uploadFileToGemini(
 
   // Step 4: Wait for Gemini to finish uploading AND processing.
   if (waitForProcessing) {
-    await waitForVideoReady(page, CONFIG.gemini.uploadTimeout, ctx);
+    await waitForVideoReady(page, CONFIG.gemini.uploadTimeout, fileName, ctx);
   } else {
+    // Still confirm the file landed. This path skips the *processing* wait, not
+    // the "is it actually there" question — a prompt sent without its attachment
+    // is answered from the prompt text alone whichever path got us here.
+    await confirmAttachment(page, fileName, 30_000, ctx);
     await waitForSendEnabled(page, 120_000);
   }
 

@@ -247,6 +247,10 @@ recorded meetings, Zoom exports and downloaded lectures all go through it.
 
 The video is moved to `Lectures/<CourseCode>/<Title>/lecture.mp4` afterwards.
 
+Reprocessing a lecture replaces its notes in place rather than creating a second
+folder. The previous raw notes are kept beside them as `lecture.raw.md.bak`, and
+the now-stale pretty file is removed so the next run regenerates it.
+
 ### Prettify existing raw notes
 
 Finds every `lecture.raw.md` missing a sibling `lecture.pretty.md` and prettifies it:
@@ -392,6 +396,21 @@ which costs almost nothing because the long upload and generation waits still
 overlap. This is why `concurrency.browserTabs` is 3 rather than a larger number,
 and why `providers.pretty` defaults to `api`.
 
+**Trusting the output.** The browser backend's most dangerous failure isn't an
+error — it's a prompt sent without its attachment. Gemini answers anyway, and
+because the prompt names the course and the part number, it answers plausibly:
+invented notes that pass every downstream check and get written, prettified and
+synced. This happened on 2026-07-25, to all eight parts of a two-hour lecture,
+with the run reporting zero errors. The upload step now *proves* the file is in
+the composer before sending and fails hard if it isn't, because a lost retry is
+cheaper than a lecture you wrongly believe you have. Selecting the model is
+likewise fatal after three attempts, so a lecture can't be split across two
+models without a record. `npm run test:attach` guards the check.
+
+Signs you're looking at fabricated notes: almost no timestamps across a long
+lecture, parts that disagree about which part they are, and per-part generation
+times far shorter than a text-only prettify of the same lecture.
+
 **Timestamp rebasing.** Each part is uploaded as a standalone video, so Gemini numbers
 every segment from 00:00 — part 2 saying `[02:00]` really means 17:00. The prompts pin
 the format to `[MM:SS]` / `[H:MM:SS]` and `src/utils/timestamps.ts` adds
@@ -410,7 +429,9 @@ a plausible-looking wrong timestamp nothing downstream can catch. Clock times
 | `No Google Cloud project configured` | A stage is set to `api` without a project. Switch it to `browser` or set `vertex.project`. |
 | Scraping finds nothing | Panopto only lists lectures you're *subscribed* to. Check the Subscriptions page in your browser first. |
 | `waitForSelector("input-area-v2") timed out` | Usually Google's "unusual traffic" check — open Gemini in `browser-data/gemini` manually and clear it. See Reliability. |
-| Notes stop mid-lecture | `gemini.responseTimeout`. Long segments on a busy day can exceed 5 minutes. |
+| Notes stop mid-lecture | `gemini.responseTimeout`. Long segments on a busy day can exceed the limit. |
+| `Gemini never showed "…" as an attachment` | The file didn't attach. This is a deliberate hard failure — see Trusting the output. Usually transient; the retry clears it. |
+| `Could not select Gemini model` | The picker's markup changed, or the tab was still hydrating. Retried 3x before failing rather than silently using a different model. |
 | Everything is filed under `UNSORTED` | No `courseCodePatterns` regex matched. See Course codes. |
 | Pipeline says it's already running | A stale lock from a killed process. Control panel → Run → Clear lock. |
 
@@ -441,6 +462,7 @@ scripts/
   run-pretty.ts        # batch prettifier
   probe-vertex.ts      # verify the Vertex model is reachable
   probe-browser.ts     # verify Gemini sign-in + concurrent tabs
+  test-attachment-detect.ts  # regression test for the attachment check
   export-notes.ts      # export to Exports/
 prompts/
   pretty-notes.txt     # prettifier formatting rules
@@ -483,9 +505,9 @@ things are Windows-only: the **Schedule** tab (Windows Task Scheduler) and
 
 Issues and pull requests are welcome. Two things to know before you open one:
 
-- `npm run typecheck` must pass. There is no test suite; the probes
-  (`npm run probe:browser`, `npm run probe:vertex`) are how the external
-  dependencies get verified.
+- `npm run typecheck` and `npm run test:attach` must pass. There is no broad
+  test suite; the probes (`npm run probe:browser`, `npm run probe:vertex`) are
+  how the external dependencies get verified.
 - Comments here explain *why*, not *what*. If a value or an approach is
   non-obvious, the reason it was chosen is the useful half.
 
