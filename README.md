@@ -1,8 +1,23 @@
-# UniNotes
+<h1 align="center">UniNotes</h1>
 
-Turns lecture recordings into study notes. It watches your university's Panopto
-for new recordings, downloads them, and has Gemini write structured notes with
-timestamps — unattended, on a schedule if you want.
+<p align="center">
+  <strong>Turns lecture recordings into study notes, unattended.</strong><br>
+  Watches your university's Panopto for new recordings, downloads them, and has
+  Gemini write structured notes with timestamps.
+</p>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-1a1d1b">
+  <img alt="Node 20 or newer" src="https://img.shields.io/badge/node-%E2%89%A5%2020-3f7a5a">
+  <img alt="Backends: browser or Vertex AI" src="https://img.shields.io/badge/Gemini-browser%20or%20Vertex-4285f4">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/run-dark.png">
+    <img alt="The UniNotes control panel: one button to run the whole pipeline, and each step listed with the count that decides whether it will do anything." src="docs/images/run.png" width="860">
+  </picture>
+</p>
 
 Built for the University of Auckland, but Panopto is the same product everywhere:
 **set one URL and it works at any institution that uses Panopto.** Lectures that
@@ -28,6 +43,83 @@ Lectures/
 Everything is available both as a CLI and as a local control panel
 (`npm run gui`). The panel is a launcher, not a second implementation — every
 button runs the command you'd otherwise type.
+
+### Highlights
+
+- **Any Panopto tenant** — one host URL is the whole institution-specific setup.
+- **Two backends per stage** — free through your signed-in browser, or billed and
+  ~10× faster through Vertex AI. Chosen independently for notes and for prettifying.
+- **Concurrent** — lectures and the parts within them run in parallel, with limits
+  you can turn down to 1 to reproduce fully sequential behaviour.
+- **Resumable** — a run that dies on part 6 of 8 reuses parts 1–5 next time.
+- **Refuses to invent** — an unattached upload is a hard failure, and empty
+  segments are detected and skipped rather than described. See [Reliability](#reliability).
+- **Nothing of yours is committed** — notes, lecture titles, sessions and settings
+  are all gitignored.
+
+### Contents
+
+[Quick start](#quick-start) ·
+[Two backends](#two-backends) ·
+[Control panel](#control-panel) ·
+[Usage](#usage) ·
+[Configuration](#configuration) ·
+[Reliability](#reliability) ·
+[Troubleshooting](#troubleshooting) ·
+[Project structure](#project-structure) ·
+[Your data stays yours](#your-data-stays-yours)
+
+---
+
+## What comes out
+
+`lecture.raw.md` is the model's own notes with YAML frontmatter and timestamps
+rebased onto the full lecture. `lecture.pretty.md` is the same content
+restructured — headings normalised, patterned lists turned into tables, and a
+Key Takeaways and Glossary section appended. Nothing is added: the prettifier is
+prompted as an editor and forbidden from introducing a fact that isn't already
+there.
+
+An abridged `lecture.pretty.md`:
+
+```markdown
+---
+title: "COMPSCI 361 L14 - Ensemble Methods - Tue 21 Jul"
+course: "COMPSCI 361"
+date: 2026-07-21
+panopto_url: "https://yourschool.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=..."
+topics:
+  - "Bagging"
+  - "Random forests"
+  - "Boosting"
+---
+
+# Ensemble Methods
+
+## Why ensembles work
+
+- [03:12] A single deep tree has low bias and high variance — it fits the
+  training set almost exactly and moves a lot when the data moves.
+- [05:40] Averaging many such models leaves the bias where it was and divides
+  the variance, provided the models' errors aren't identical.
+
+| Method | What it varies | Trained |
+|---|---|---|
+| Bagging | The training sample | In parallel |
+| Random forest | Sample **and** the features at each split | In parallel |
+| Boosting | The weight on each example | Sequentially |
+
+> "Decorrelation is the whole trick — a forest of identical trees is one tree."
+
+## Key Takeaways
+
+- Ensembles reduce variance, not bias.
+- Random forests decorrelate trees by restricting the features per split.
+```
+
+The timestamps are what make this worth more than a transcript: they're offsets
+into the full recording, and the frontmatter carries the Panopto URL, so
+anything ambiguous in the notes can be checked against what was actually said.
 
 ---
 
@@ -186,13 +278,28 @@ Four tabs:
 | **Settings** | Institution, providers, models, concurrency, timeouts, browser mode, Google Cloud — with the ranges and the reasoning attached. |
 | **Schedule** | Windows Task Scheduler entries, with presets for once/twice daily and hourly. |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/library-dark.png">
+  <img alt="The Library tab: every lecture with its course, status and which notes exist. A blank recording and a failed one each carry the reason underneath." src="docs/images/library.png">
+</picture>
+
 The library is a **union of the database and the disk**, so lecture folders with
-no tracking row still appear and can still be prettified and opened.
+no tracking row still appear and can still be prettified and opened. A row's
+status carries its own explanation: `blank` says what the detector measured,
+`error` says what failed, and a partially-processed lecture says how far it got.
 
 Settings are saved to `settings.json` and merged over the defaults in `config.ts`
 at load. The GUI never rewrites `config.ts` — defaults stay readable and in git,
 your overrides are a small gitignored file, and "reset to defaults" is a
 deletion. Changes take effect on the next run, since each job is its own process.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
+  <img alt="The Settings tab: Panopto host, per-stage backend, and model IDs, each with the reasoning next to it and 'changed from default' marking overrides." src="docs/images/settings.png">
+</picture>
+
+Anything you've overridden is marked *changed from default*, so the difference
+between "this is how it ships" and "I set this" is visible without opening a file.
 
 Design notes and wireframes: [docs/gui-design.md](docs/gui-design.md).
 
@@ -524,10 +631,11 @@ things are Windows-only: the **Schedule** tab (Windows Task Scheduler) and
 
 Issues and pull requests are welcome. Two things to know before you open one:
 
-- `npm test` must pass (typecheck + the two regression tests). Both tests are
-  pure string/DOM work — no browser session, no network. The probes
-  (`npm run probe:browser`, `npm run probe:vertex`) are how the external
-  dependencies get verified.
+- `npm test` must pass: a typecheck plus three regression suites — attachment
+  detection, timestamp rebasing and blank-segment detection. None of them touch
+  the network or a browser session; the blank suite builds its own fixtures with
+  ffmpeg. The probes (`npm run probe:browser`, `npm run probe:vertex`) are how
+  the external dependencies get verified.
 - Comments here explain *why*, not *what*. If a value or an approach is
   non-obvious, the reason it was chosen is the useful half.
 
