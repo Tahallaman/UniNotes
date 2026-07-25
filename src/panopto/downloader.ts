@@ -66,6 +66,15 @@ export async function downloadLecture(lecture: LectureRow): Promise<string> {
     log.info(`Download complete: ${lecture.title} (${destPath})`);
     return destPath;
   } finally {
-    await context.close();
+    // Closing the context is not enough. On the storage-state path,
+    // launchPanoptoBrowser() calls chromium.launch() and then newContext(), so a
+    // whole Browser process sits behind the context and outlives its close —
+    // holding the Node process open with it. The run finishes all its work,
+    // prints "Complete", and then hangs forever with nothing left to do.
+    // `context.browser()` is null for a persistent context, which owns no
+    // separate browser to close. Same fix as scrapePanopto().
+    const browser = context.browser();
+    await context.close().catch(() => {});
+    await browser?.close().catch(() => {});
   }
 }
