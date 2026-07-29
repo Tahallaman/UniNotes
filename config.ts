@@ -462,8 +462,22 @@ export const DEFAULTS = {
    */
   exports: {
     folderTemplate: "{course}",
-    /** Blank inherits naming.fileTemplate. */
-    fileTemplate: "" as string,
+    /**
+     * Leads with the lecture number, unlike the default elsewhere.
+     *
+     * A course folder here holds a whole semester, flat, and is read in an
+     * alphabetical file list — so the order the list comes out in is the only
+     * order you get. Panopto titles put the number wherever the department felt
+     * like it, or leave it out, which sorts a semester by nothing in
+     * particular. `{number2}` is padded so lecture 10 doesn't file between 1
+     * and 2.
+     *
+     * The second copy deliberately doesn't do this: its notes sit a handful to
+     * a Week folder, where sorting is not the problem being solved.
+     *
+     * Blank inherits naming.fileTemplate.
+     */
+    fileTemplate: "Lecture {number2} - {course} - {title}" as string,
   },
 
   /**

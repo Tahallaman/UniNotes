@@ -192,6 +192,29 @@ start date you can edit; storing it would mean correcting a term silently left
 every lecture filed where it already was. The cell's tooltip carries the date and
 where it came from, because "week 8" being wrong is a question about the date.
 
+### Moving what a template renamed
+
+Everything else here follows one rule: nothing at a destination is ever moved or
+deleted. That rule is right — those folders are yours, and a tool that rearranges
+an Obsidian vault because you edited a text box is one you stop trusting — but it
+has a cost, and the cost is a duplicate. Change a template and every note exists
+twice under two names, identical, with nothing to say which is current.
+
+So there is exactly one exception, and `src/notes/exportLedger.ts` is the whole
+of it: a JSON file at each destination root recording where each lecture's note
+was last written. A note moves when that file says we put it somewhere and we are
+now putting it somewhere else. Anything not recorded is not touched, which covers
+every file you filed, renamed or wrote yourself.
+
+A file at the destination rather than a column in the database, because the
+ledger describes a *folder*: point the workspace at another drive and the new one
+is correctly empty; restore a folder from backup and its ledger comes back with
+it. It is never authoritative — a missing, corrupt or hand-edited ledger costs a
+rename, never a note, since the copy happens regardless and the worst case is the
+duplicate you'd have had anyway. An occupied destination blocks the move and
+reports both paths, because choosing between two files in someone's notes folder
+is not a file operation. `npm run sync -- --dry-run` lists every move first.
+
 ### Terms, weeks and naming
 
 `{number}` — which lecture of its course this is — arrived from a parallel
@@ -199,6 +222,12 @@ implementation of exported names (PR #1) and is the one part of it that survived
 the merge intact. Two naming systems couldn't both own a path, and templates
 already did everything that one did except this, so it became a token rather than
 a second scheme with its own on/off switch and its own opinion about filenames.
+
+`Exports/` leads with the number by default; the second copy doesn't. A course
+folder under `Exports/` holds a whole semester, flat, read as an alphabetical
+list — sorting is the only thing standing between you and a pile. The workspace
+copy is already broken into `Week N/Lectures/` folders holding a handful of notes
+each, so the same change would buy nothing and lengthen every name.
 
 Numbering is a course-wide operation, which is why it is passed into
 `destinationFor` rather than derived inside it: "the third lecture" is a fact

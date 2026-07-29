@@ -508,15 +508,21 @@ npm run sync -- --dry-run   # list every destination, write nothing
 
 ```
 Exports/
-  Raw/<CourseCode>/<Name>.md
-  Pretty/<CourseCode>/<Name>.md
+  Raw/<CourseCode>/Lecture 01 - <CourseCode> - <title>.md
+  Pretty/<CourseCode>/Lecture 01 - <CourseCode> - <title>.md
 
 <your study folder>/
   <Term>/<CourseCode>/Week <n>/Lectures/<Name>.md
 ```
 
 Both paths come from templates you control — see **Terms and weeks** below.
-Nothing is ever moved or deleted at either destination.
+Nothing at either destination is deleted, and only one thing is ever moved: a
+note UniNotes itself put there, when you change a template and it now belongs
+under a different name. That keeps a template change from leaving every note
+twice in the folder you read. Files you filed, renamed or wrote yourself are
+never touched, and a name already taken is never overwritten — the old copy
+stays and the run says so. `npm run sync -- --dry-run` lists every move before
+any of it happens.
 
 ### Terms and weeks
 
@@ -549,7 +555,12 @@ the order the lectures were given rather than by whatever the department typed
 first. It comes from the title where the title states one — "Lecture 3", "L03C"
 — and from date order where it doesn't, filling the gaps around the stated ones.
 `{number2}` pads it to two digits, which is what keeps lecture 10 after lecture
-9 in an alphabetical list. To lead with it:
+9 in an alphabetical list.
+
+`Exports/` leads with it by default, because a course folder there holds a whole
+semester flat and an alphabetical list is the only order you get. The second copy
+doesn't: its notes sit a handful to a Week folder, where sorting isn't the
+problem being solved.
 
 ```
 Lecture {number2} - {course} - {title}
@@ -603,9 +614,8 @@ control panel) or in environment variables, which win over both.
 | `terms.enabled` | true | Work out a teaching week for each lecture |
 | `terms.list` | *(empty)* | Your terms — name, start date, weeks, optional break |
 | `naming.fileTemplate` | `{course} - {title} - {date}` | How a note file is named |
-| `exports.fileTemplate` | *(inherits)* | Add `Lecture {number2} - ` to lead with the lecture number |
 | `exports.folderTemplate` | `{course}` | Folders below `Exports/Raw/` and `Exports/Pretty/` |
-| `exports.fileTemplate` | *(inherits)* | Blank uses `naming.fileTemplate` |
+| `exports.fileTemplate` | `Lecture {number2} - {course} - {title}` | Leads with the lecture number so a course folder sorts in order |
 | `workspace.enabled` | false | Keep a second copy of each pretty note elsewhere |
 | `workspace.root` | `~/Documents/UniNotes` | Where that copy goes |
 | `workspace.folderTemplate` | `{term}/{course}/Week {week}/Lectures` | Folders in that copy |

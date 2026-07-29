@@ -18,6 +18,7 @@ import { CONFIG } from "../config.js";
 import { listLectures } from "../src/gui/library.js";
 import { workspaceDestination, syncToWorkspace } from "../src/utils/workspaceSync.js";
 import { lectureNumbersByCourse } from "../src/notes/organise.js";
+import { readLedger, writeLedger, moveRecorded } from "../src/notes/exportLedger.js";
 
 const dryRun = process.argv.slice(2).includes("--dry-run");
 
@@ -38,8 +39,14 @@ let copied = 0;
 let upToDate = 0;
 let missing = 0;
 let undated = 0;
+let renamed = 0;
 
 const entries = listLectures().filter((e) => e.lectureDir);
+
+// Where each note was last written, so a template change moves it instead of
+// leaving a second copy beside it. See src/notes/exportLedger.ts.
+const ledger = readLedger(CONFIG.workspace.root);
+
 // Numbered across the whole library before anything is written: a lecture's
 // number depends on its siblings, so it can't be worked out inside the loop.
 const numbers = lectureNumbersByCourse(
@@ -65,15 +72,36 @@ for (const entry of entries) {
 
   if (entry.lectureDate === null) undated++;
 
+  const { file } = workspaceDestination(facts);
+  const relative = path.relative(CONFIG.workspace.root, file).split(path.sep).join("/");
+
   if (dryRun) {
-    const { file } = workspaceDestination(facts);
-    console.log(`WOULD COPY: ${path.relative(CONFIG.workspace.root, file)}`);
+    console.log(`WOULD COPY: ${relative}`);
+    const recorded = ledger[entry.key];
+    if (recorded && recorded !== relative) console.log(`WOULD RENAME: ${recorded}  ->  ${relative}`);
     copied++;
     continue;
   }
 
+  // Before the copy: afterwards the new name is occupied and the old one is a
+  // file we'd refuse to move onto it.
+  const recorded = ledger[entry.key];
+  if (recorded) {
+    const outcome = moveRecorded(CONFIG.workspace.root, recorded, relative);
+    if (outcome.kind === "moved") {
+      renamed++;
+      console.log(`RENAMED: ${outcome.from}  ->  ${outcome.to}`);
+    } else if (outcome.kind === "blocked") {
+      console.warn(
+        `LEFT BEHIND: ${outcome.from} — something already sits at ${outcome.to}; ` +
+          `delete whichever you don't want.`,
+      );
+    }
+  }
+
   try {
     const written = syncToWorkspace(entry.courseCode, prettyPath, facts);
+    ledger[entry.key] = relative;
     if (written) copied++;
     else upToDate++;
   } catch (err) {
@@ -82,9 +110,14 @@ for (const entry of entries) {
   }
 }
 
+// Not on a dry run: nothing moved, so recording where things are would be a
+// claim about a folder this run deliberately didn't touch.
+if (!dryRun) writeLedger(CONFIG.workspace.root, ledger);
+
 console.log(
   `\n${dryRun ? "Dry run" : "Sync"} complete: ${copied} ${dryRun ? "to copy" : "copied"}, ` +
-    `${upToDate} already current, ${missing} without pretty notes`,
+    `${upToDate} already current, ${missing} without pretty notes` +
+    (renamed > 0 ? `, ${renamed} renamed` : ""),
 );
 
 if (undated > 0) {
