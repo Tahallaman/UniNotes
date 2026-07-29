@@ -301,6 +301,11 @@ download would buy you.
 - **Scrolling never moves the video.** Reading ahead is free. Scrolling does turn
   auto-scrolling off, and the pill under the video turns it back on and takes you
   to wherever playback has got to.
+- **Switching tabs keeps your place.** Following stays on and the new tab lands
+  on the same moment; with it off, each tab remembers where you were reading.
+- **Raw opens by default when you press play**, because the prettifier thins out
+  the timestamps and those are what the sync runs on. Without a video, Pretty
+  opens — that's the one you read.
 
 - **A Transcript tab** beside Pretty and Raw, from Panopto's own captions,
   synced the same way — it highlights and scrolls line by line as the lecture

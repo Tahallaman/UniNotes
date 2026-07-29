@@ -289,6 +289,26 @@ video is not by itself a request to watch one.
 └────────────────────────────────────┴─────────────────────────────────────┘
 ```
 
+**Raw is the tab a video opens on**, and Pretty the one everything else does. The
+prettifier restructures the notes and thins out the timestamps in the process,
+and timestamps are what the whole sync runs on — so the tab that is better to
+read is the wrong one to watch against. Only on the opening that starts a player;
+a redraw (correcting a date, say) is not allowed to move you off the tab you
+chose.
+
+**A tab switch is not a scroll**, which took a guard to make true. Replacing the
+pane's contents resets `scrollTop` to 0 and the browser reports that like any
+other scroll, so switching from Pretty to Transcript used to switch Following off
+and leave you to press the button again. Every content swap is stamped, and the
+scroll handler ignores anything within half a second of one — a window rather
+than a flag, so a failed load can't leave following stuck on for the rest of the
+lecture. Following then re-centres the new tab on the current moment, so the
+switch lands you at the same place in a different document.
+
+With following off there is no current moment to land on, so each tab remembers
+where you were reading, per lecture. Session-only: a reading position is not a
+fact worth writing to disk.
+
 **Swap sides** lives in the player bar, not only in Settings. Which side you want
 depends on the lecture — slides dense on one edge, a lecturer's face on the other
 — so it belongs next to the video. It still writes `player.notesSide`, because a

@@ -810,7 +810,7 @@ document.getElementById("lib-actions").addEventListener("click", guard(async (ev
  * every per-lecture action, and it was unreachable for exactly the lectures you
  * had done the most with. Watching is now a thing you press.
  */
-function openDrawer(key, play = false) {
+function openDrawer(key, play = false, keepTab = false) {
   state.drawerKey = key;
   const entry = state.entries.find((e) => e.key === key);
   if (!entry) return;
@@ -886,6 +886,13 @@ function openDrawer(key, play = false) {
   }
   facts.append(actions);
 
+  // Raw is the tab you want with a video in front of you. The prettifier
+  // restructures the notes and, in doing so, thins out the timestamps — which
+  // are what the whole sync is built on, and the reason to have the two side by
+  // side at all. Reading is what Pretty is for, and reading is what you do with
+  // no video open, so that stays the default there.
+  if (play && entry.hasRaw && !keepTab) state.noteTab = "raw";
+
   // The transcript stands on its own — it's a file beside the notes, so the tab
   // is offered whether or not there's a video to sync it to.
   const transcriptTab = document.querySelector('.drawer-tab[data-note="transcript"]');
@@ -932,8 +939,9 @@ function dateControl(entry) {
     await refreshLibrary();
     const updated = state.entries.find((e) => e.key === entry.key);
     // Reopened in whatever mode it was in — correcting a date shouldn't throw
-    // you out of the player you were watching in.
-    if (updated) openDrawer(updated.key, player.active);
+    // you out of the player you were watching in, nor off the tab you were on:
+    // this is a redraw, not the opening that gets to pick a default.
+    if (updated) openDrawer(updated.key, player.active, true);
     refreshPreview();
   }));
   wrap.append(input);
@@ -984,21 +992,69 @@ document.querySelectorAll(".drawer-tab").forEach((tab) => {
   });
 });
 
+/**
+ * Put new content in the notes pane, without it reading as a scroll.
+ *
+ * Replacing the children resets scrollTop to 0, and the browser reports that as
+ * a scroll like any other — which is how switching from Pretty to Transcript
+ * used to switch Following off and leave you to press it again. Stamping the
+ * swap first is what tells the scroll handler the movement was ours.
+ */
+function swapNotes(target, node) {
+  player.reloadAt = performance.now();
+  target.replaceChildren(node);
+}
+
+/**
+ * Where you were in each tab of each lecture.
+ *
+ * Following puts you wherever the video is, which is the whole point of it. With
+ * it off, the tabs are three documents you are reading by hand, and throwing
+ * each one back to the top every time you glance at another is the behaviour of
+ * something that has not been paying attention.
+ *
+ * Session-only, and per lecture as well as per tab: it is a reading position,
+ * not a fact worth writing to disk.
+ */
+const scrollMemory = new Map();
+
+function scrollKey() {
+  return `${state.drawerKey}::${state.noteTab}`;
+}
+
+function rememberScroll() {
+  if (state.drawerKey) scrollMemory.set(scrollKey(), notesEl.scrollTop);
+}
+
+/** Clamped by the browser, so a shorter document just lands at its end. */
+function restoreScroll() {
+  const remembered = scrollMemory.get(scrollKey());
+  if (!remembered) return;
+  player.reloadAt = performance.now();
+  notesEl.scrollTop = remembered;
+}
+
 async function loadNotes() {
   const target = document.getElementById("drawer-notes");
   if (!state.drawerKey) return;
-  target.replaceChildren(el("p", { class: "console-idle", text: "Loading…" }));
+  swapNotes(target, el("p", { class: "console-idle", text: "Loading…" }));
   try {
     if (state.noteTab === "transcript") {
       const vtt = await getText(`/api/subtitles?key=${encodeURIComponent(state.drawerKey)}`);
-      target.replaceChildren(renderTranscript(vtt));
+      swapNotes(target, renderTranscript(vtt));
     } else {
       const data = await get(`/api/notes?key=${encodeURIComponent(state.drawerKey)}&which=${state.noteTab}`);
-      target.replaceChildren(renderMarkdown(data.content));
+      swapNotes(target, renderMarkdown(data.content));
     }
+    // Re-stamps the groups and, while Following, centres the new tab on wherever
+    // the video has got to — so a switch lands you at the same moment, not at
+    // the top of a different document.
     syncNotes();
+    // Not following, so nothing has claimed a position: put you back where you
+    // left this tab.
+    if (!player.active || !player.follow) restoreScroll();
   } catch (err) {
-    target.replaceChildren(el("p", { class: "console-idle", text: err.message }));
+    swapNotes(target, el("p", { class: "console-idle", text: err.message }));
   }
 }
 
@@ -1115,6 +1171,13 @@ const player = {
   autoScrollAt: 0,
   /** And where we scrolled it to — the surer half of the same test. */
   autoScrollTo: -1,
+  /**
+   * When the pane's contents were last replaced.
+   *
+   * A swap resets scrollTop to 0 and the browser reports that as a scroll, which
+   * is neither you scrolling away nor a position worth remembering.
+   */
+  reloadAt: 0,
   /** Measured narrowest sensible notes column, in px — the drag floor. */
   notesFit: 0,
   /**
@@ -1553,6 +1616,13 @@ videoEl.addEventListener("error", () => {
 // rather than `wheel` covers the scrollbar, the keyboard and a trackpad alike;
 // the timestamp is what tells our own scrolling apart from yours.
 notesEl.addEventListener("scroll", () => {
+  // A tab swap threw the pane back to the top; that is the document changing
+  // under you, not you scrolling away from it — and it is certainly not a
+  // position worth remembering. A window rather than a flag, so a failed load
+  // can't leave following stuck on for the rest of the lecture.
+  if (performance.now() - player.reloadAt < 500) return;
+
+  rememberScroll();
   if (!player.active || !player.follow) return;
   // Ours, by position or by the clock. Either alone lets one through: the clock
   // misses a scroll event delayed past its window, and the position alone would
