@@ -316,6 +316,15 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     max: 30,
     help: "Clicking a note lands this far before its timestamp, so you hear the run-up.",
   },
+  {
+    path: "player.skipSeconds",
+    label: "Arrow key skip (seconds)",
+    group: "Player",
+    type: "int",
+    min: 1,
+    max: 120,
+    help: "How far ← and → move the video while you're watching.",
+  },
 
   // ── Explain ─────────────────────────────────────────────────────────────
   {

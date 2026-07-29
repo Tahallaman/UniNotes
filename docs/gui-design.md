@@ -439,6 +439,24 @@ this loses is the video element's *own* fullscreen button, where the page's
 overlay is behind the picture — so entering that hands the cues back to the
 browser and leaving takes them again.
 
+**← and → skip, from anywhere in the player.** The keys are bound to the
+document rather than to the video, because the video only has focus if you
+clicked it and the thing you were doing before you wanted to hear that again was
+reading the notes. Left and right, not up and down: those still have to scroll
+the pane. `player.skipSeconds` decides how far, defaulting to 15 — the browser's
+own 5 means pressing the key four times to reach a sentence you missed, and how
+far back that actually is depends on how fast the lecturer talks. The clock
+carries the hint, since a keybinding with nothing on screen is a keybinding
+nobody finds.
+
+Two things it deliberately doesn't do. It doesn't turn Following back on, unlike
+clicking a note: skipping back is "say that again", not "take me elsewhere", and
+if you had scrolled off to read something further down, dragging the pane back is
+the opposite of what you asked for. And it stands aside for anything with a
+caret — a focused input, textarea or contenteditable keeps its own arrow keys, as
+do the two pane dividers, which resize with the same keys and get the event first
+by being focused. `defaultPrevented` is the whole arbitration.
+
 **Fetching a video doesn't move you.** Every other job jumps to the Run tab,
 because a job started from the Library would otherwise look like it did nothing.
 A video fetch is the exception: it is a download you start and then carry on

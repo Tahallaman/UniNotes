@@ -184,6 +184,15 @@ export const DEFAULTS = {
      * almost always where you actually wanted to be.
      */
     seekLeadIn: 2,
+    /**
+     * Seconds the ← and → keys move the video by.
+     *
+     * 15 because that is what a lecture asks for: the thing you missed is a
+     * sentence or two back, and the browser's own 5 seconds means pressing the
+     * key four times to get there. Configurable because it depends on how fast
+     * the lecturer talks — 10 for a dense one, 30 for a slow one.
+     */
+    skipSeconds: 15,
   },
 
   /**

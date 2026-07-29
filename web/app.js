@@ -1722,6 +1722,59 @@ document.getElementById("player-sync").addEventListener("click", guard(async () 
   renderSettings();
 }));
 
+/** How far ← and → move the video. Matches player.skipSeconds's schema. */
+function skipSeconds() {
+  return Math.min(120, Math.max(1, Number(state.settings.values["player.skipSeconds"]) || 15));
+}
+
+/**
+ * Move the video by a nudge, without disturbing where you are in the notes.
+ *
+ * Following is deliberately left alone, unlike clicking a note: skipping back
+ * fifteen seconds is "say that again", not "take me somewhere else", and if you
+ * had scrolled off to read something further down, yanking the pane back is the
+ * opposite of what you asked for. The highlight still moves, and Jump to now is
+ * one press away.
+ */
+function skipBy(seconds) {
+  const end = Number.isFinite(videoEl.duration) ? videoEl.duration : Infinity;
+  videoEl.currentTime = Math.min(end, Math.max(0, videoEl.currentTime + seconds));
+}
+
+/**
+ * ← and → skip, the way every other player does.
+ *
+ * On the document rather than the video, because the video only has focus if
+ * you clicked it and the thing you were doing before you wanted to skip was
+ * reading the notes. Left and right rather than up and down: those still have
+ * to scroll the pane.
+ *
+ * `defaultPrevented` is how the two dividers keep their own use of the same
+ * keys — they resize the panes, and being focused is what makes theirs win.
+ */
+document.addEventListener("keydown", (event) => {
+  if (!player.active || event.defaultPrevented) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+  if (direction === 0) return;
+
+  // Never take the arrow keys off something you're typing in — the Explain box
+  // is right there, and moving the caret is what they're for.
+  const focus = document.activeElement;
+  if (focus?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(focus?.tagName)) return;
+
+  // Also the browser's own ±5 seconds, which would otherwise land on top of
+  // ours whenever the video happens to have focus.
+  event.preventDefault();
+  skipBy(direction * skipSeconds());
+});
+
+/** The keys are invisible, so the clock says what they do. */
+function refreshSkipHint() {
+  document.getElementById("player-clock").title =
+    `← and → skip ${skipSeconds()} seconds — change it in Settings, under Player`;
+}
+
 // ── The split ────────────────────────────────────────────────────────────────
 
 /**
@@ -2432,6 +2485,7 @@ function renderSettings() {
   // changed from this form instead.
   applyCueSize(state.settings.values["player.subtitleSize"]);
   refreshCueButtons();
+  refreshSkipHint();
 
   const changed = Object.keys(state.draft);
   document.getElementById("settings-bar").hidden = changed.length === 0;
