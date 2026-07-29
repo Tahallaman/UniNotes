@@ -26,6 +26,7 @@ const state = {
   noteTab: "pretty",
   preview: null,     // last naming preview, or null before the first one
   termProblems: [],  // validation messages keyed to a term id
+  stopped: false,    // the server was shut down from here; nothing will answer again
 };
 
 // ── API ──────────────────────────────────────────────────────────────────────
@@ -467,8 +468,11 @@ function appendLine(line) {
 
 // ── Live event stream ────────────────────────────────────────────────────────
 
+let eventSource = null;
+
 function connectEvents() {
   const source = new EventSource("/api/events");
+  eventSource = source;
 
   source.addEventListener("message", (event) => {
     const data = JSON.parse(event.data);
@@ -496,6 +500,9 @@ function connectEvents() {
   });
 
   source.addEventListener("error", () => {
+    // Losing the stream is expected after a shutdown we asked for, and saying
+    // "lost contact" over the top of "Stopped" would read like a fault.
+    if (state.stopped) return;
     // EventSource reconnects on its own; the snapshot on reconnect resyncs state.
     document.getElementById("state-meta").textContent = "lost contact with the server";
   });
@@ -2361,6 +2368,50 @@ document.getElementById("drawer-details").addEventListener("click", () => {
  * fact about your notes pipeline. With nothing stored, the system preference
  * applies — the stylesheet already handles that on its own.
  */
+// ── Stopping the server ──────────────────────────────────────────────────────
+
+/**
+ * Put the page into its final state.
+ *
+ * Nothing here will work again — there's no server to answer — so the page says
+ * that plainly and dims itself rather than leaving controls that look live. The
+ * stream is closed by hand too, or EventSource would spend the rest of the
+ * afternoon reconnecting to a port with nothing behind it.
+ */
+function markStopped() {
+  state.stopped = true;
+  if (eventSource) eventSource.close();
+  document.getElementById("state-dot").className = "dot";
+  document.getElementById("state-text").textContent = "Stopped";
+  document.getElementById("state-meta").textContent =
+    "the control panel is no longer running — start it again with npm run gui";
+  document.body.classList.add("is-stopped");
+}
+
+document.getElementById("shutdown").addEventListener("click", guard(async () => {
+  if (!confirm(
+    "Stop UniNotes?\n\n" +
+    "The server exits and this page stops working. You'll need a terminal to start it again.",
+  )) return;
+
+  try {
+    await post("/api/shutdown");
+  } catch (err) {
+    // 409 is the server declining to orphan a job's process tree. Only that one
+    // is worth a second ask; anything else is a real failure and should surface.
+    if (!/job is still running/i.test(err.message)) throw err;
+    if (!confirm(
+      "A job is still running.\n\n" +
+      "Stopping now cancels it, along with the ffmpeg and browser processes it started. " +
+      "Parts already finished stay checkpointed and get reused on the next run.\n\n" +
+      "Stop anyway?",
+    )) return;
+    await post("/api/shutdown", { force: true });
+  }
+
+  markStopped();
+}));
+
 const THEME_KEY = "uninotes-theme";
 const themeToggle = document.getElementById("theme-toggle");
 

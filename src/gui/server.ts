@@ -69,6 +69,21 @@ const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
 };
 
+// ── Shutdown ──────────────────────────────────────────────────────────────────
+
+/**
+ * What the launcher does when the panel asks to stop.
+ *
+ * The route only asks. scripts/gui.ts owns what stopping actually means — close
+ * the server, sweep the video cache, exit — so the button and Ctrl-C go down one
+ * path instead of two that drift apart.
+ */
+let onShutdown: (() => void) | null = null;
+
+export function setShutdownHandler(fn: () => void): void {
+  onShutdown = fn;
+}
+
 // ── Request helpers ───────────────────────────────────────────────────────────
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -594,6 +609,38 @@ async function handleApi(
       return;
     }
 
+    // Stopping from the browser exists because closing the terminal doesn't stop
+    // anything: Windows never turns a console close into the SIGINT the launcher
+    // listens for, so the server is left running with no way left to ask it
+    // politely. This is that way.
+    case "POST /api/shutdown": {
+      if (!onShutdown) {
+        sendJson(res, 501, { error: "This server was started without a shutdown handler." });
+        return;
+      }
+
+      // A job is a process tree — tsx, then ffmpeg, then Playwright's browser.
+      // Exiting out from under it orphans the lot, which is the mess this route
+      // is here to prevent, so it takes an explicit ask and cancels first.
+      if (jobs.isRunning()) {
+        if (body.force !== true) {
+          sendJson(res, 409, {
+            error: "A job is still running.",
+            running: true,
+          });
+          return;
+        }
+        await jobs.cancel();
+      }
+
+      sendJson(res, 200, { message: "Shutting down." });
+      // Answer first. Tearing the server down mid-reply would reach the browser
+      // as a failed request, which reads as "the button is broken" rather than
+      // "it worked".
+      res.on("finish", () => setTimeout(() => onShutdown?.(), 50));
+      return;
+    }
+
     default:
       sendJson(res, 404, { error: `No route for ${req.method} ${pathname}` });
   }
@@ -672,5 +719,10 @@ export async function stopServer(server: http.Server): Promise<void> {
   for (const client of sseClients) client.end();
   sseClients.clear();
   closeLibraryDb();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+  // close() stops new connections but waits on every open one, and a browser
+  // holds its keep-alive sockets open long after the last reply — including the
+  // one that just asked to shut down. Without this the wait never ends.
+  server.closeAllConnections();
+  await closed;
 }

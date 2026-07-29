@@ -250,6 +250,16 @@ main { padding-bottom: 5rem; }
 .head-btn-close svg { width: 18px; height: 18px; }
 .head-btn-close:hover { color: var(--broken); border-color: var(--line); }
 
+/* Ends the session rather than navigating, so it warms to the broken colour on
+   hover the same way the drawer's close button does. */
+.head-btn-stop:hover { color: var(--broken); border-color: var(--line); background: var(--sunken); }
+
+/* Once the server is gone every control is a dead end, so the page says so and
+   stops pretending otherwise. Pointer events go last — the message stays legible. */
+body.is-stopped main,
+body.is-stopped .nav,
+body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
+
 /* Icon reflects the theme you're in; the tooltip says where clicking takes you. */
 .theme-toggle { margin-left: auto; align-self: center; }
 .theme-toggle .icon-moon { display: none; }

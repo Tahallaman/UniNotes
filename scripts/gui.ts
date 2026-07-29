@@ -5,7 +5,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { startServer, stopServer } from "../src/gui/server.js";
+import type { Server } from "node:http";
+import { startServer, stopServer, setShutdownHandler } from "../src/gui/server.js";
 import { ensureDirectories } from "../src/utils/paths.js";
 import { getDb, closeDb } from "../src/db/schema.js";
 import { clearVideoCache, type CacheSweep } from "../src/utils/videoCache.js";
@@ -41,7 +42,9 @@ try {
   closeDb();
 }
 
-let server;
+// Annotated rather than inferred: shutdown() closes over it, and inference from
+// the assignment below doesn't reach inside a function body.
+let server: Server;
 try {
   server = await startServer(port);
 } catch (err) {
@@ -57,7 +60,7 @@ try {
 }
 
 const url = `http://localhost:${port}`;
-console.log(`\n  UniNotes control panel → ${url}\n  Press Ctrl-C to stop.\n`);
+console.log(`\n  UniNotes control panel → ${url}\n  Press Ctrl-C to stop, or use Stop in the panel.\n`);
 
 /**
  * Open the panel in the browser, if this platform has something to open it with.
@@ -101,13 +104,20 @@ if (shouldOpen) {
 }
 
 let shuttingDown = false;
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.log("\nShutting down...");
-    stopServer(server)
-      .finally(() => reportSweep("on shutdown", clearVideoCache()))
-      .finally(() => process.exit(0));
-  });
+function shutdown(reason: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\nShutting down (${reason})...`);
+  stopServer(server)
+    .finally(() => reportSweep("on shutdown", clearVideoCache()))
+    .finally(() => process.exit(0));
 }
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => shutdown(signal));
+}
+
+// The panel's stop button lands here too. It's the only way to end a run cleanly
+// once the terminal that started it is gone: closing a console window on Windows
+// never becomes a SIGINT, so the handler above is unreachable by then.
+setShutdownHandler(() => shutdown("asked from the control panel"));
