@@ -303,6 +303,7 @@ function namingPreview(body: Record<string, unknown>): unknown {
             courseCode: entry.courseCode,
             resolvedDate: entry.lectureDate,
             resolvedSource: entry.dateSource,
+            lectureNumber: numbers.get(entry.key) ?? null,
           },
           { folderTemplate: destination.folderTemplate, fileTemplate: destination.fileTemplate },
           terms as never,
