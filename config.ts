@@ -297,6 +297,36 @@ export const DEFAULTS = {
   },
 
   /**
+   * What a note is called once it leaves Lectures/.
+   *
+   * Inside Lectures/ a lecture's folder is named after the recording, verbatim,
+   * because that title is how the pipeline recognises a lecture it has already
+   * processed. Panopto titles are whatever the department typed, though, so a
+   * folder of them sorts by nothing in particular:
+   *
+   *   ENGGEN 403 [21 July] Lecture 1 What can ENGGEN 403 do for me
+   *   [423-348] SOFTENG 761 L01CSOFTENG 761 L02C - Mon 20 Jul 0200 PM (NZT)
+   *
+   * Exports and the second copy are read, not matched against, so they get the
+   * lecture number in front where an alphabetical file list can use it:
+   *
+   *   Lecture 01 - ENGGEN 403 - [21 July] What can ENGGEN 403 do for me.md
+   */
+  exportNaming: {
+    /** Off restores the old behaviour: the recording's title, unchanged. */
+    enabled: true as boolean,
+    /**
+     * Digits the number is padded to.
+     *
+     * 2 rather than 1 because the sort this exists for is a string sort: at one
+     * digit, lecture 10 files between 1 and 2 and stays there for the rest of
+     * the semester. Set to 1 if you prefer "Lecture 1" and your courses are
+     * short enough that it never matters.
+     */
+    numberDigits: 2,
+  },
+
+  /**
    * A second copy of each pretty note, filed into another folder as it's written
    * — typically the OneDrive/Dropbox/Obsidian folder you actually study from.
    *

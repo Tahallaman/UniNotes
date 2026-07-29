@@ -313,6 +313,27 @@ export const SETTING_FIELDS: readonly SettingField[] = [
       "The YAML frontmatter is re-attached by code, so a rule about preserving it is redundant. Default: prompts/pretty-notes.txt.",
   },
 
+  // ── Exported names ──────────────────────────────────────────────────────
+  {
+    path: "exportNaming.enabled",
+    label: "Number exported notes",
+    group: "Exported names",
+    type: "bool",
+    help:
+      'Renames exports to "Lecture 01 - COURSE 123 - title.md" so a folder sorts in lecture order. ' +
+      "Lectures/ keeps the recording's own title either way.",
+  },
+  {
+    path: "exportNaming.numberDigits",
+    label: "Number width",
+    group: "Exported names",
+    type: "int",
+    min: 1,
+    max: 3,
+    dependsOn: "exportNaming.enabled",
+    help: "2 keeps lecture 10 after lecture 9 — the sort this exists for is a string sort.",
+  },
+
   // ── Second copy ─────────────────────────────────────────────────────────
   {
     path: "workspace.enabled",
