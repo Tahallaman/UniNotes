@@ -288,7 +288,7 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     type: "int",
     min: 12,
     max: 100,
-    help: "A percentage of the browser's own default, which is sized for a television across a room.",
+    help: "Share of the size a browser draws captions at. Also on the A− / A+ buttons.",
   },
   {
     path: "player.notesSide",

@@ -156,11 +156,13 @@ export const DEFAULTS = {
      */
     subtitles: false as boolean,
     /**
-     * Subtitle text size, as a percentage of the browser's own default.
+     * Subtitle text size, as a percentage of the size a browser draws captions.
      *
-     * The browser's default is sized for a phone held at arm's length. On a
-     * player sharing a window with the notes it swallows the bottom third of the
-     * slide, which is where lecturers put the thing they're pointing at, so the
+     * Measured against the picture's height rather than fixed in pixels, so it
+     * survives dragging the divider and going full screen. 100 is about what a
+     * browser draws unaided, which is sized for a phone held at arm's length —
+     * on a player sharing a window with the notes that swallows the bottom third
+     * of the slide, where lecturers put the thing they're pointing at, so the
      * default here is well under half of it.
      */
     subtitleSize: 31,

@@ -393,8 +393,21 @@ function renderMaintenance() {
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
-const startJob = guard(async (jobId, extra = {}) => {
+/**
+ * Start a job, and by default go and watch it.
+ *
+ * `stay` is for the ones you fire off and carry on around: fetching a video is
+ * a download you asked for and then forget about, and throwing you onto the Run
+ * tab to watch a progress log loses your place in the list you were working
+ * through. Those get a line of toast instead, and the library refreshes itself
+ * when the job finishes, so the row you pressed turns into "play" on its own.
+ */
+const startJob = guard(async (jobId, { stay = false, toast: message = "", ...extra } = {}) => {
   await post("/api/jobs/start", { jobId, ...extra });
+  if (stay) {
+    if (message) toast(message);
+    return;
+  }
   // Jump to Run so the output is visible — a job started from the Library would
   // otherwise look like it did nothing.
   document.querySelector('.nav-item[data-tab="run"]').click();
@@ -680,7 +693,11 @@ function videoControl(entry) {
     title: "Download the recording so you can watch it against these notes",
   });
   fetchVideo.addEventListener("click", guard(() =>
-    startJob("fetch-video", { selection: { ids: [entry.id], dirs: [] } }),
+    startJob("fetch-video", {
+      selection: { ids: [entry.id], dirs: [] },
+      stay: true,
+      toast: "Fetching the recording — this row turns into “play” when it lands.",
+    }),
   ));
   return fetchVideo;
 }
@@ -879,7 +896,11 @@ function openDrawer(key, play = false, keepTab = false) {
       const fetchVideo = el("button", { class: "btn", text: "Fetch video for the player" });
       fetchVideo.addEventListener("click", guard(async () => {
         closeDrawer();
-        await startJob("fetch-video", { selection: { ids: [entry.id], dirs: [] } });
+        await startJob("fetch-video", {
+          selection: { ids: [entry.id], dirs: [] },
+          stay: true,
+          toast: "Fetching the recording — the lecture gets a “play” link when it lands.",
+        });
       }));
       actions.append(fetchVideo);
     }
@@ -1473,31 +1494,52 @@ function applySubtitles(entry) {
   track.label = "Panopto transcript";
   track.srclang = "en";
   track.src = `/api/subtitles?key=${encodeURIComponent(entry.key)}`;
+  // Bound to the element rather than the TextTrack object: the track's cues
+  // aren't parsed yet, and addEventListener on textTracks[0] here would attach
+  // to something that is replaced when the file loads.
+  track.addEventListener("load", () => {
+    videoEl.textTracks[0]?.addEventListener("cuechange", paintCues);
+    paintCues();
+  });
   videoEl.append(track);
 
   setSubtitles(state.settings.values["player.subtitles"] === true);
 }
 
 /**
- * Write the subtitle size into a stylesheet of its own.
+ * Size the subtitles, as a share of the picture's height.
  *
- * ::cue matches inside the video's shadow tree, where a custom property set on
- * the page does not reliably reach — so this can't be a `var()` in styles.css
- * driven by a `style.setProperty`. A one-rule stylesheet rewritten in place is
- * the version that works everywhere and can't half-apply.
+ * Relative to the video rather than fixed, because the player is resizable: a
+ * size chosen against a half-window video is wrong the moment you drag the
+ * divider or go full screen. Browsers size their own captions this way for the
+ * same reason.
  *
- * A percentage, because that is what `::cue { font-size }` is measured against:
- * the browser's own default, which is sized for a television across a room.
+ * 100 is roughly what a browser draws unaided (about 5% of the height); the
+ * default of 31 is the "well under half of that" this started out wanting.
  */
 function applyCueSize(percent) {
-  let sheet = document.getElementById("cue-size");
-  if (!sheet) {
-    sheet = document.createElement("style");
-    sheet.id = "cue-size";
-    document.head.append(sheet);
-  }
   const size = Math.min(100, Math.max(12, Number(percent) || 31));
-  sheet.textContent = `video::cue { font-size: ${size}%; }`;
+  const frame = document.querySelector(".player-frame");
+  if (!frame) return;
+  const height = frame.getBoundingClientRect().height || 400;
+  frame.style.setProperty("--cue-px", `${Math.max(9, Math.round(height * 0.05 * (size / 100)))}px`);
+}
+
+/**
+ * Put whatever is being said now into our own subtitle element.
+ *
+ * One <span> per cue rather than one for the block, so each line gets its own
+ * box and a two-line cue doesn't come out as one wide ragged slab.
+ */
+function paintCues() {
+  const box = document.getElementById("player-cues");
+  const track = videoEl.textTracks[0];
+  const active = track ? [...(track.activeCues ?? [])] : [];
+  box.replaceChildren(
+    // .text keeps WebVTT's own markup; textContent on a span discards it, which
+    // is what we want — a stray <v Speaker> tag should not print as characters.
+    ...active.map((cue) => el("span", { text: cue.text.replace(/<[^>]+>/g, "").trim() })),
+  );
 }
 
 /** Bounds and step for the A− / A+ pair. Matches player.subtitleSize's schema. */
@@ -1512,9 +1554,16 @@ function currentCueSize() {
 function setSubtitles(on) {
   const cc = document.getElementById("player-cc");
   cc.setAttribute("aria-pressed", String(on));
-  // Every track, because a lecture only ever has one but a stale one from the
-  // previous lecture showing through would be worse than none.
-  for (const track of videoEl.textTracks) track.mode = on ? "showing" : "disabled";
+  // "hidden", not "showing": the cues still fire cuechange, which is all we
+  // want from the browser — the drawing is ours. Every track, because a lecture
+  // only ever has one but a stale one from the previous lecture showing through
+  // would be worse than none.
+  for (const track of videoEl.textTracks) track.mode = on ? "hidden" : "disabled";
+
+  const box = document.getElementById("player-cues");
+  box.hidden = !on;
+  if (on) { applyCueSize(currentCueSize()); paintCues(); }
+  else box.replaceChildren();
 
   // The size control only exists while there is something to size. Hidden with
   // the Subtitles chip itself, so a lecture with no transcript shows neither.
@@ -1565,6 +1614,13 @@ function stepCueSize(delta) {
 document.getElementById("player-cc-smaller").addEventListener("click", () => stepCueSize(-CUE_STEP));
 document.getElementById("player-cc-bigger").addEventListener("click", () => stepCueSize(CUE_STEP));
 
+// The size is a share of the picture, so it has to be recomputed whenever the
+// picture changes shape — dragging the divider, going full screen, resizing the
+// window. One observer covers all three.
+new ResizeObserver(() => {
+  if (player.active) applyCueSize(currentCueSize());
+}).observe(document.querySelector(".player-frame"));
+
 function teardownPlayer() {
   player.active = false;
   player.groups = [];
@@ -1576,6 +1632,9 @@ function teardownPlayer() {
   document.getElementById("player-cc").hidden = true;
   document.getElementById("player-cc-smaller").hidden = true;
   document.getElementById("player-cc-bigger").hidden = true;
+  const cueBox = document.getElementById("player-cues");
+  cueBox.hidden = true;
+  cueBox.replaceChildren();
   document.getElementById("player-explain").hidden = true;
   document.getElementById("player-explain-open").hidden = true;
   document.getElementById("player-pane").hidden = true;
@@ -2210,7 +2269,26 @@ document.addEventListener("fullscreenchange", () => {
   // The panes changed size, so a column sized to the old window may now be out
   // of bounds — and after exiting, the notes should get their share back.
   if (player.active) applyNotesWidth(clampNotesWidth(currentNotesWidth()));
+  if (player.active) handOverCues();
 });
+
+/**
+ * Give the subtitles back to the browser while the video alone is full screen.
+ *
+ * Our subtitle element lives in the page, so it isn't painted when the video
+ * element is the fullscreen element — the picture covers it. That path is the
+ * video's own control rather than ours, but coming out of it with no subtitles
+ * at all would be worse than the browser's, so hand them over and take them
+ * back on the way out.
+ */
+function handOverCues() {
+  const on = document.getElementById("player-cc").getAttribute("aria-pressed") === "true";
+  if (!on) return;
+  const theirs = document.fullscreenElement === videoEl;
+  for (const track of videoEl.textTracks) track.mode = theirs ? "showing" : "hidden";
+  document.getElementById("player-cues").hidden = theirs;
+  if (!theirs) paintCues();
+}
 
 document.getElementById("drawer-details").addEventListener("click", () => {
   const drawer = document.getElementById("drawer");

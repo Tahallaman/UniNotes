@@ -579,8 +579,28 @@ main { padding-bottom: 5rem; }
 
 /* The frame takes the whole column and letterboxes inside it, so the video is
    centred against black rather than sitting on top of a slab of empty panel. */
-.player-frame { flex: 1; min-height: 0; background: #000; }
+.player-frame { flex: 1; min-height: 0; background: #000; position: relative; }
 .player-frame video { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* Subtitles we draw ourselves.
+   ::cue looked like the right answer and mostly isn't: a browser with caption
+   preferences set — Chrome's chrome://settings/captions, and the OS-level
+   equivalents — overrides author ::cue styling wholesale, so the size control
+   did nothing and so did every other rule we wrote. Painting the active cue into
+   an ordinary element is the version that obeys us on every machine.
+   Clear of the controls, which Chrome puts in the bottom ~10%. */
+.player-cues {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 12%; width: max-content; max-width: 88%;
+  display: flex; flex-direction: column; align-items: center; gap: .18em;
+  pointer-events: none; text-align: center; text-wrap: balance;
+  font-family: var(--sans); font-size: var(--cue-px, 15px); line-height: 1.3;
+}
+.player-cues[hidden] { display: none; }
+.player-cues span {
+  background: rgb(0 0 0 / .76); color: #fff;
+  padding: .1em .4em; border-radius: 3px;
+}
 
 .player-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
@@ -720,20 +740,7 @@ main { padding-bottom: 5rem; }
 .transcript p { line-height: 1.72; margin-bottom: .55rem; }
 .transcript .ts { margin-right: .3rem; }
 
-/* Subtitles. Chrome's default is a black box in a system font at a size meant
-   for a phone held at arm's length — on a half-window player it swallows the
-   bottom third of the slide.
-
-   The size is deliberately not here: it's a setting, written into a stylesheet of
-   its own by applyCueSize() in app.js. ::cue lives in the video's shadow tree and
-   custom properties do not reliably reach it, so a var() here would have been a
-   rule that silently did nothing in some browsers. */
-video::cue {
-  background: rgb(0 0 0 / .74);
-  color: #fff;
-  font-family: var(--sans);
-  line-height: 1.35;
-}
+/* Subtitles are drawn by us, not by the browser — see .player-cues above. */
 
 /* Scrollbars. Left to the browser these are a white slab in a dark panel, which
    is the one piece of chrome that never got the theme. */

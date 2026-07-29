@@ -425,6 +425,27 @@ result, and one write per press would queue a decision you are still making. The
 reach for them, so a row of them is one group instead of several competing
 controls, which is what underlined text links beside a large × had become.
 
+**The subtitles are drawn by the page, not by the browser.** `::cue` looked like
+the obvious way to size them and is a dead end: a browser whose caption
+preferences have been set — Chrome's `chrome://settings/captions`, or the OS
+equivalent — overrides every author `::cue` rule, so A− and A+ moved the number
+and changed nothing on screen. The fix is to stop asking. The track runs at
+`mode = "hidden"`, which still fires `cuechange` while drawing nothing, and a
+`cuechange` handler paints the active cues into a `#player-cues` overlay we own.
+Size is then just a font size on an ordinary element: `--cue-px` at 5% of the
+frame's height scaled by the setting, recomputed by a `ResizeObserver` on the
+frame so dragging the divider or going full screen rescales it. The one thing
+this loses is the video element's *own* fullscreen button, where the page's
+overlay is behind the picture — so entering that hands the cues back to the
+browser and leaving takes them again.
+
+**Fetching a video doesn't move you.** Every other job jumps to the Run tab,
+because a job started from the Library would otherwise look like it did nothing.
+A video fetch is the exception: it is a download you start and then carry on
+around, and being thrown onto a progress log loses your place in the list you
+were working through. So it stays put, says one line of toast, and the row turns
+into "play" on its own when the file lands.
+
 **What comes back from Panopto is cached, not stored.** The player needs a local file, but a
 lecture video is the largest thing this tool touches. So a kept recording goes to
 `temp/video-cache/`, which is emptied when the control panel starts *and* when it

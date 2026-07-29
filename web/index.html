@@ -241,6 +241,9 @@
       <section id="player-pane" class="player-pane" hidden>
         <div class="player-frame">
           <video id="player-video" controls preload="metadata" playsinline></video>
+          <!-- Our own subtitles. The browser's are switched to "hidden", which
+               still fires cuechange but draws nothing — see setSubtitles(). -->
+          <div id="player-cues" class="player-cues" aria-hidden="true" hidden></div>
         </div>
         <div class="player-bar">
           <div class="player-bar-groups">
