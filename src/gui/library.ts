@@ -19,6 +19,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { CONFIG } from "../../config.js";
 import type { LectureRow, LectureStatus } from "../db/tracker.js";
+import { effectiveConfig } from "./effective.js";
+import { placeLecture, type DateSource, type LectureFacts } from "../notes/organise.js";
+import { cachedVideoPath } from "../utils/videoCache.js";
+import { hasCaptions } from "../panopto/captions.js";
 
 /** "on-disk" is not a DB status — it marks a lecture folder with no row. */
 export type LibraryStatus = LectureStatus | "on-disk";
@@ -36,11 +40,23 @@ export interface LibraryEntry {
   errorMessage: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** Ticked by hand. Always false for a folder with no row to record it in. */
+  watched: boolean;
+  /** Best known recording date, YYYY-MM-DD, or null if nothing yielded one. */
+  lectureDate: string | null;
+  /** Which source that date came from — shown so a wrong week is traceable. */
+  dateSource: DateSource;
+  /** The date you typed, if you corrected it. */
+  dateOverride: string | null;
+  termLabel: string | null;
+  week: number | null;
   /** Absolute path to Lectures/<course>/<title>/, when it exists. */
   lectureDir: string | null;
   hasRaw: boolean;
   hasPretty: boolean;
   hasVideo: boolean;
+  /** A Panopto transcript is in the cache for this session. */
+  hasCaptions: boolean;
   rawBytes: number | null;
   prettyBytes: number | null;
   /** Resume progress, if a checkpoint is sitting in temp/. */
@@ -200,6 +216,59 @@ function checkpointKey(lectureId: string): string {
   return lectureId.replace(/[^\w.-]+/g, "_").slice(0, 100) || "lecture";
 }
 
+// ── Dates ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The `date:` line the model wrote into a note's frontmatter.
+ *
+ * Last resort, and read lazily for that reason: only lectures where Panopto,
+ * a manual correction and the title have all come up empty ever open a file, so
+ * a library refresh doesn't read every note on disk to answer a question three
+ * cheaper sources usually answer first.
+ */
+function frontmatterDate(lectureDir: string | null): string | null {
+  if (!lectureDir) return null;
+  try {
+    const handle = fs.openSync(path.join(lectureDir, "lecture.raw.md"), "r");
+    try {
+      const buffer = Buffer.alloc(1024);
+      const read = fs.readSync(handle, buffer, 0, buffer.length, 0);
+      const head = buffer.subarray(0, read).toString("utf-8");
+      // Only inside the frontmatter block — a "date:" in the prose below it is
+      // something the lecture talked about, not when it happened.
+      const fence = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
+      if (!fence) return null;
+      return /^date:\s*(\d{4}-\d{2}-\d{2})/m.exec(fence[1])?.[1] ?? null;
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve one lecture's date, then its term and week.
+ *
+ * Reads terms from the *effective* config rather than this process's CONFIG:
+ * the GUI server is long-lived and froze its CONFIG at import, so a term you
+ * just added would otherwise not affect the library until the server restarted.
+ * See src/gui/effective.ts.
+ */
+function place(facts: LectureFacts, lectureDir: string | null) {
+  const config = effectiveConfig();
+  const terms = config.terms.list;
+  const enabled = config.terms.enabled;
+
+  const first = placeLecture(facts, terms, enabled);
+  if (first.date) return first;
+
+  const fallback = frontmatterDate(lectureDir);
+  if (!fallback) return first;
+
+  return placeLecture({ ...facts, frontmatterDate: fallback }, terms, enabled);
+}
+
 // ── Assembly ──────────────────────────────────────────────────────────────────
 
 export function listLectures(): LibraryEntry[] {
@@ -223,6 +292,17 @@ export function listLectures(): LibraryEntry[] {
 
     const cp = checkpoints.get(checkpointKey(row.id)) ?? null;
 
+    const placement = place(
+      {
+        title: row.title,
+        courseCode: row.course_code,
+        dateOverride: row.date_override,
+        recordedAt: row.recorded_at,
+        near: row.created_at,
+      },
+      onDisk?.lectureDir ?? null,
+    );
+
     entries.push({
       key: row.id,
       id: row.id,
@@ -235,10 +315,19 @@ export function listLectures(): LibraryEntry[] {
       errorMessage: row.error_message,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      watched: row.watched === 1,
+      lectureDate: placement.date,
+      dateSource: placement.dateSource,
+      dateOverride: row.date_override,
+      termLabel: placement.term?.label ?? null,
+      week: placement.week,
       lectureDir: onDisk?.lectureDir ?? null,
       hasRaw: onDisk?.hasRaw ?? false,
       hasPretty: onDisk?.hasPretty ?? false,
-      hasVideo: onDisk?.hasVideo ?? false,
+      // Either an archived local video beside the notes, or a Panopto recording
+      // sitting in the cache for this session — the player takes either.
+      hasVideo: (onDisk?.hasVideo ?? false) || cachedVideoPath(row.id) !== null,
+      hasCaptions: hasCaptions(row.id),
       rawBytes: onDisk?.rawBytes ?? null,
       prettyBytes: onDisk?.prettyBytes ?? null,
       checkpoint: cp,
@@ -248,6 +337,13 @@ export function listLectures(): LibraryEntry[] {
   // Whatever the database didn't account for is still real and still actionable.
   for (const [key, d] of disk) {
     if (claimed.has(key)) continue;
+
+    // The folder name is all there is to go on — it was the title once.
+    const placement = place(
+      { title: d.title, courseCode: d.courseCode, near: d.mtime || null },
+      d.lectureDir,
+    );
+
     entries.push({
       key: `disk:${d.lectureDir}`,
       id: null,
@@ -260,10 +356,18 @@ export function listLectures(): LibraryEntry[] {
       errorMessage: null,
       createdAt: d.mtime || null,
       updatedAt: d.mtime || null,
+      watched: false,
+      lectureDate: placement.date,
+      dateSource: placement.dateSource,
+      dateOverride: null,
+      termLabel: placement.term?.label ?? null,
+      week: placement.week,
       lectureDir: d.lectureDir,
       hasRaw: d.hasRaw,
       hasPretty: d.hasPretty,
       hasVideo: d.hasVideo,
+      // No database row, so no id to key a cached transcript by.
+      hasCaptions: false,
       rawBytes: d.rawBytes,
       prettyBytes: d.prettyBytes,
       checkpoint: null,

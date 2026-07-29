@@ -33,7 +33,9 @@ function migrate(db: Database.Database): void {
       gemini_chat_url TEXT,
       error_message   TEXT,
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      -- Set by hand from the Library, never by the pipeline. 0 = not watched.
+      watched         INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_lectures_status ON lectures(status);
@@ -47,6 +49,24 @@ function migrate(db: Database.Database): void {
   }
 
   widenStatusCheck(db);
+
+  // After the rebuild above, not before: it recreates the table from a fixed
+  // column list that predates these, so a column added first would be dropped.
+  const afterRebuild = db.pragma("table_info(lectures)") as Array<{ name: string }>;
+  const has = (name: string) => afterRebuild.some((c) => c.name === name);
+
+  if (!has("watched")) {
+    db.exec(`ALTER TABLE lectures ADD COLUMN watched INTEGER NOT NULL DEFAULT 0`);
+  }
+  // The recording's own date, straight from Panopto's Date column.
+  if (!has("recorded_at")) {
+    db.exec(`ALTER TABLE lectures ADD COLUMN recorded_at TEXT`);
+  }
+  // A date you corrected by hand. Only ever set from the Library — everything
+  // else about a lecture's week is derived, so this is the sole escape hatch.
+  if (!has("date_override")) {
+    db.exec(`ALTER TABLE lectures ADD COLUMN date_override TEXT`);
+  }
 
   log.info("Database initialized");
 }

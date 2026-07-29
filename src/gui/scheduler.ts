@@ -56,8 +56,17 @@ interface TaskMeta {
 }
 
 /** Jobs it makes sense to run unattended — anything that waits for a human doesn't. */
+/** Jobs worth running unattended: not interactive, not a preview, and not one
+ *  that needs a selection there is no way to make from a scheduled task. */
+const NOT_SCHEDULABLE = new Set([
+  "selected",
+  "prettify-selected",
+  "sync-workspace-dry",
+  "probe-panopto-view",
+]);
+
 export function schedulableJobs(): Array<{ id: string; label: string }> {
-  return JOB_DEFINITIONS.filter((d) => !d.interactive && d.id !== "selected" && d.id !== "prettify-selected")
+  return JOB_DEFINITIONS.filter((d) => !d.interactive && !NOT_SCHEDULABLE.has(d.id))
     .map((d) => ({ id: d.id, label: d.label }));
 }
 

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyUserSettings } from "./src/settings/overlay.js";
+import type { Term } from "./src/notes/organise.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +90,21 @@ export const DEFAULTS = {
      */
     baseUrl: "" as string,
     subscriptionsPath: "/Panopto/Pages/Sessions/List.aspx#isSubscriptionsPage=true",
+    /**
+     * Fragment value that selects table view, the only view showing a Date
+     * column. Configurable because it's an undocumented internal — if a Panopto
+     * update renumbers the views, this is a one-line fix rather than a release.
+     */
+    tableViewId: 0,
+    /**
+     * Caption language slots to try, in order, taking the first that has any.
+     *
+     * Panopto's viewer itself asks for 0 then 1; which one is populated is a
+     * property of the recording, not the tenant, so both are tried rather than
+     * one being hardcoded. Add more slots here if your institution publishes
+     * additional languages.
+     */
+    captionLanguages: [0, 1] as number[],
     /** Max scroll attempts to load infinite-scroll items */
     maxScrolls: 3,
     /** Delay between scrolls (ms) */
@@ -99,6 +115,74 @@ export const DEFAULTS = {
 
   /** Video splitting — max segment duration in seconds (e.g. 900 = 15 min) */
   segmentSeconds: 900,
+
+  /**
+   * The player in the control panel, and what it needs to exist.
+   *
+   * Panopto cannot supply the video here. Its pages send
+   * `frame-ancestors 'self' https:`, so they refuse to embed in a page served
+   * over http://127.0.0.1, and the embed API only offers a polled current time
+   * even where it does load. So the player reads the file next to the notes,
+   * which also means exact seeking and no dependency on being online.
+   *
+   * Nothing accumulates: a kept recording goes to `paths.videoCache` under
+   * temp/, which is emptied when UniNotes starts and again when it stops. Notes
+   * are permanent, videos are not.
+   *
+   * `keep` is still off by default. Fetching one back from the library takes
+   * seconds, whereas a full pipeline run with it on holds every lecture's video
+   * until you close the panel — which is tens of gigabytes for the sake of a
+   * wait you probably weren't going to notice.
+   */
+  player: {
+    /** Cache the downloaded video for the player instead of deleting it. */
+    keep: false as boolean,
+    /**
+     * Tie the notes to the video at all.
+     *
+     * Off, the player is a video beside the notes and nothing more: no
+     * highlighting, no self-scrolling, and a click in the notes is a click
+     * rather than a seek. On by default — it's the point of the thing — but it
+     * is an opinion about how you read, and sometimes you only want to read.
+     */
+    sync: true as boolean,
+    /**
+     * Show Panopto's transcript as subtitles over the video.
+     *
+     * Off by default: with the notes beside the video and the transcript on its
+     * own tab, burning a third copy of the words over the slides is usually one
+     * too many. On when you want it — a mumbled lecture, or a lecturer you're
+     * still tuning your ear to.
+     */
+    subtitles: false as boolean,
+    /**
+     * Subtitle text size, as a percentage of the browser's own default.
+     *
+     * The browser's default is sized for a phone held at arm's length. On a
+     * player sharing a window with the notes it swallows the bottom third of the
+     * slide, which is where lecturers put the thing they're pointing at, so the
+     * default here is well under half of it.
+     */
+    subtitleSize: 31,
+    /** Which side of the video the notes sit on. */
+    notesSide: "right" as "left" | "right",
+    /**
+     * Width of the notes column in pixels, or 0 to fit it to the notes.
+     *
+     * 0 is the default and the better answer: the column becomes exactly as wide
+     * as the reading measure the notes are already laid out to, and the video
+     * takes the rest. A number here is what dragging the divider records.
+     */
+    notesWidth: 0,
+    /**
+     * Seconds to rewind when jumping to a note.
+     *
+     * A timestamp marks where a point was *made*, so landing exactly on it puts
+     * you a beat after the sentence that set it up. A couple of seconds back is
+     * almost always where you actually wanted to be.
+     */
+    seekLeadIn: 2,
+  },
 
   /**
    * Skip recordings that contain nothing, before they cost a pipeline run.
@@ -230,6 +314,13 @@ export const DEFAULTS = {
      * re-attaches itself — so this one is safe to rewrite wholesale.
      */
     prettyRules: promptFile("pretty-notes.txt"),
+    /**
+     * How "Explain this" should answer. Nothing parses the reply — it is rendered
+     * as markdown into the dock and then forgotten — so this one is entirely
+     * yours. The lecture material it answers from is assembled separately and
+     * appended by src/gui/explain.ts.
+     */
+    explain: promptFile("explain.txt"),
   },
 
   /** Course code extraction — tried in order, first match wins */
@@ -251,6 +342,14 @@ export const DEFAULTS = {
     exports: path.join(__dirname, "Exports"),
     prompts: path.join(__dirname, "prompts"),
     incoming: path.join(__dirname, "Incoming"),
+    /**
+     * Recordings held only so the player has something to play.
+     *
+     * Its own folder under temp/ rather than temp/ itself, because the sweep
+     * that empties it on start and shutdown must not be able to reach split
+     * parts, checkpoints or the lock file sitting alongside.
+     */
+    videoCache: path.join(__dirname, "temp", "video-cache"),
     db: path.join(__dirname, "uninotes.db"),
     todo: path.join(__dirname, "TODO.md"),
     lockFile: path.join(__dirname, "temp", ".lock"),
@@ -296,35 +395,6 @@ export const DEFAULTS = {
     delayMs: 2_000,
   },
 
-  /**
-   * What a note is called once it leaves Lectures/.
-   *
-   * Inside Lectures/ a lecture's folder is named after the recording, verbatim,
-   * because that title is how the pipeline recognises a lecture it has already
-   * processed. Panopto titles are whatever the department typed, though, so a
-   * folder of them sorts by nothing in particular:
-   *
-   *   ENGGEN 403 [21 July] Lecture 1 What can ENGGEN 403 do for me
-   *   [423-348] SOFTENG 761 L01CSOFTENG 761 L02C - Mon 20 Jul 0200 PM (NZT)
-   *
-   * Exports and the second copy are read, not matched against, so they get the
-   * lecture number in front where an alphabetical file list can use it:
-   *
-   *   Lecture 01 - ENGGEN 403 - [21 July] What can ENGGEN 403 do for me.md
-   */
-  exportNaming: {
-    /** Off restores the old behaviour: the recording's title, unchanged. */
-    enabled: true as boolean,
-    /**
-     * Digits the number is padded to.
-     *
-     * 2 rather than 1 because the sort this exists for is a string sort: at one
-     * digit, lecture 10 files between 1 and 2 and stays there for the rest of
-     * the semester. Set to 1 if you prefer "Lecture 1" and your courses are
-     * short enough that it never matters.
-     */
-    numberDigits: 2,
-  },
 
   /**
    * A second copy of each pretty note, filed into another folder as it's written
@@ -338,7 +408,142 @@ export const DEFAULTS = {
     /** Turn the second copy off entirely. Nothing else here applies when false. */
     enabled: false as boolean,
     root: path.join(os.homedir(), "Documents", "UniNotes"),
-    unsortedFolder: "Unsorted Lectures",
+    /**
+     * Defaults to the layout a student keeps by hand: the course, the teaching
+     * week, and a Lectures folder beside Slides. {term} is blank for the term
+     * you're in — that segment then disappears, leaving current courses at the
+     * root and archived ones under whatever folder their term names.
+     */
+    folderTemplate: "{term}/{course}/Week {week}/Lectures",
+    /** Blank inherits naming.fileTemplate. */
+    fileTemplate: "" as string,
+    /**
+     * Copy each pretty note the moment it's written, rather than only when you
+     * run the sync job. Separate from `enabled` so the second copy can stay
+     * configured while you batch it up.
+     */
+    syncOnWrite: true as boolean,
+  },
+
+  /**
+   * Teaching terms, and the weeks derived from them.
+   *
+   * Deliberately not "semesters": the same arithmetic serves trimesters,
+   * quarters and summer school, and a tool that names the concept after one
+   * institution's calendar is a tool half its users have to fight. A term is a
+   * start date, a number of teaching weeks, and optionally a break — nothing
+   * about it assumes how many of them a year holds.
+   */
+  terms: {
+    /**
+     * Off means no week folders anywhere and no terms to configure. Naming still
+     * applies — the two features are independent.
+     */
+    enabled: true as boolean,
+    list: [] as Term[],
+  },
+
+  /**
+   * How a note is named, wherever it's written.
+   *
+   * Templates rather than a fixed convention, because "tidy" is not one thing:
+   * the {week} token exists for people who want it in the filename, and is
+   * deliberately absent from the default for the many who don't.
+   */
+  naming: {
+    fileTemplate: "{course} - {title} - {date}",
+  },
+
+  /**
+   * Exports/ — the local copy, independent of the workspace folder above.
+   *
+   * Flat per course by default, matching what's already there. Week folders are
+   * one template edit away for anyone who wants them here too.
+   */
+  exports: {
+    folderTemplate: "{course}",
+    /**
+     * Leads with the lecture number, unlike the default elsewhere.
+     *
+     * A course folder here holds a whole semester, flat, and is read in an
+     * alphabetical file list — so the order the list comes out in is the only
+     * order you get. Panopto titles put the number wherever the department felt
+     * like it, or leave it out, which sorts a semester by nothing in
+     * particular. `{number2}` is padded so lecture 10 doesn't file between 1
+     * and 2.
+     *
+     * The second copy deliberately doesn't do this: its notes sit a handful to
+     * a Week folder, where sorting is not the problem being solved.
+     *
+     * Blank inherits naming.fileTemplate.
+     */
+    fileTemplate: "Lecture {number2} - {course} - {title}" as string,
+  },
+
+  /**
+   * "Explain this" — the question you ask the lecture while you're watching it.
+   *
+   * Vertex only, and not because of a preference. The `browser` provider drives a
+   * real Gemini web session through Playwright: one tab, one PID lock, minutes per
+   * answer. That is a fine way to process a lecture overnight and a hopeless way
+   * to answer a question while you are sat paused at 14:32. With no Cloud project
+   * configured the button says so rather than appearing and failing.
+   *
+   * Everything sent is assembled server-side from the lecture you have open, so
+   * the size of what leaves the machine is bounded by these settings and not by
+   * what a page happened to ask for.
+   */
+  explain: {
+    enabled: true as boolean,
+    /** Flash by default: the answer is short and the latency is the point. */
+    model: "gemini-3.6-flash",
+    /**
+     * Minimal by default for the same reason. A definition does not need to be
+     * reasoned about for twenty seconds, and you are sat there waiting for it.
+     */
+    thinkingLevel: "minimal" as "minimal" | "low" | "medium" | "high" | undefined,
+    /** Short answers. Raise it if you keep getting cut off mid-explanation. */
+    maxOutputTokens: 4_096,
+    /**
+     * Roughly how much of the notes around a question to send, in characters.
+     *
+     * Not a choice between "this section" and "the whole file". Sections are not
+     * a uniform size — one is a page on branch prediction, the next is two
+     * bullets about a drop-in clinic — so "the section you're in" is sometimes
+     * four lines, and a model given four lines correctly reports that it hasn't
+     * been told enough. This is the amount that has to be reached before the
+     * slice stops growing outwards; it rounds up to whole sections, never cutting
+     * one mid-sentence.
+     *
+     * The whole document is deliberately not a setting. Sending 25 KB with every
+     * question is slow, dear, and buries what you asked about among everything
+     * you didn't — so it is a button in the panel, for the one question that
+     * needs it, and it sends once.
+     */
+    contextChars: 1_400,
+    /** Which copies of the lecture go in. */
+    include: {
+      pretty: true as boolean,
+      raw: false as boolean,
+      /** Panopto's transcript — the lecturer's actual words, when there is one. */
+      subtitles: true as boolean,
+    },
+    /** How far back the transcript window reaches, in cues. */
+    subtitleLines: 8,
+    /**
+     * Hard ceiling on the assembled context, in characters.
+     *
+     * A backstop rather than a dial: "document" scope on a long lecture, or a
+     * pathological notes file, must not turn one click into a very large bill.
+     */
+    maxContextChars: 24_000,
+    /** Seconds before a hung call is given up on. There is no Cancel behind it. */
+    timeoutSeconds: 90,
+    /**
+     * Height of the dock under the video in pixels, or 0 for a sensible share.
+     * What dragging its top edge records, the same way player.notesWidth is.
+     */
+    dockHeight: 0,
   },
 
   /** Vertex AI (Google Cloud) settings — used by the "api" uploader mode */

@@ -3,13 +3,15 @@ import path from "node:path";
 import { chromium, type BrowserContext } from "playwright";
 import { CONFIG } from "../../config.js";
 import { log } from "../utils/logger.js";
-import { lectureExists, type NewLecture } from "../db/tracker.js";
+import { lectureExists, backfillRecordedAt, type NewLecture } from "../db/tracker.js";
+import { parseListingDate } from "../notes/organise.js";
 import {
   downloadUrl as buildDownloadUrl,
   isPanoptoAppUrl,
   isPanoptoConfigured,
   PanoptoNotConfiguredError,
   subscriptionsUrl,
+  tableViewUrl,
 } from "./endpoints.js";
 
 const STORAGE_STATE_PATH = path.join(
@@ -24,6 +26,8 @@ export interface ScrapedLecture {
   courseCode: string;
   panoptoUrl: string;
   downloadUrl: string;
+  /** YYYY-MM-DD from the listing's Date column, or null if it wasn't readable. */
+  recordedAt: string | null;
 }
 
 /**
@@ -127,32 +131,58 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
 
   try {
     const page = context.pages()[0] || (await context.newPage());
+    // Table view, because it is the only view with a Date column — and the date
+    // Panopto records is far better than one guessed from a title, which many
+    // lectures don't carry at all. The view is selected by URL fragment; see
+    // tableViewUrl() for why it is appended rather than substituted.
+    //
     // Use "load" not "networkidle" — Panopto has constant background analytics
     // traffic that prevents networkidle from ever firing
-    await page.goto(subscriptionsUrl(), {
+    await page.goto(tableViewUrl(), {
       timeout: CONFIG.panopto.navigationTimeout,
       waitUntil: "load",
     });
 
-    // The page uses hash-based routing (#isSubscriptionsPage=true) — the JS
-    // renders the list asynchronously after page load. Wait specifically for
-    // a list row to appear, or for the "X search result" status text which
-    // indicates the list finished loading (even if empty).
-    await page.waitForFunction(
-      () => {
-        // Rows are present
-        if (document.querySelector("tr.list-view-row") !== null) return true;
-        // Status text like "1 search result available below" or "0 search results available below"
-        const statusEl = document.querySelector(".listResultsHeader, [class*='results-count'], [class*='result-count']");
-        if (statusEl) return true;
-        // Fallback: look for the specific result count text in the page
-        const bodyText = document.body.innerText || "";
-        return bodyText.includes("search result available below");
-      },
-      { timeout: 50_000 },
-    ).catch(() => {
-      log.warn("Timed out waiting for subscription list — page may be empty or auth expired");
-    });
+    // The page uses hash-based routing — the JS renders the list asynchronously
+    // after page load. Waiting for "a row" is not enough: Panopto ships an
+    // unrendered template row whose cells still read "{binding StartTime, ...}",
+    // and it is present long before any data is. Wait for a row carrying a real
+    // GUID, which only a rendered one has.
+    const ready = await page
+      .waitForFunction(
+        () => {
+          const rows = document.querySelectorAll("tr.table-view-row, tr.list-view-row");
+          for (const row of rows) {
+            if (/^[a-f0-9-]{36}$/i.test(row.id)) return true;
+          }
+          const bodyText = document.body.innerText || "";
+          return bodyText.includes("search result available below");
+        },
+        { timeout: 50_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    // A fragment change on an already-loaded page doesn't re-render, so if the
+    // view didn't take, give it one reload before giving up on the dates.
+    if (!ready || (await page.locator("tr.table-view-row").count()) === 0) {
+      log.warn("Table view didn't render on first load — reloading once.");
+      await page.reload({ timeout: CONFIG.panopto.navigationTimeout, waitUntil: "load" });
+      await page
+        .waitForFunction(
+          () => {
+            const rows = document.querySelectorAll("tr.table-view-row, tr.list-view-row");
+            for (const row of rows) {
+              if (/^[a-f0-9-]{36}$/i.test(row.id)) return true;
+            }
+            return false;
+          },
+          { timeout: 50_000 },
+        )
+        .catch(() => {
+          log.warn("Timed out waiting for subscription list — page may be empty or auth expired");
+        });
+    }
 
     log.info(`Scraper page URL: ${page.url()}`);
 
@@ -170,20 +200,27 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
     // virtual list removes them from the DOM when scrolled out of view.
     const extractRows = () =>
       page.evaluate(() => {
-        const rows = document.querySelectorAll("tr.list-view-row");
+        // Both views, because the table one is what we ask for but the list one
+        // is what we get if the fragment ever stops working — and a scan that
+        // returns nothing is a worse failure than one without dates.
+        const rows = document.querySelectorAll("tr.table-view-row, tr.list-view-row");
         const results: Array<{
           id: string;
           title: string;
           folderName: string;
           url: string;
+          date: string;
         }> = [];
 
         for (const row of rows) {
           const id = row.id;
+          // Also excludes Panopto's unrendered template row, whose id is still
+          // the literal "{{$dataItem.DeliveryID}}".
           if (!id || !/^[a-f0-9-]{36}$/i.test(id)) continue;
 
+          // a.list-title in table view, a.detail-title in list view.
           const titleLink = row.querySelector(
-            "td.detail-cell a.detail-title",
+            "a.list-title, td.detail-cell a.detail-title",
           ) as HTMLAnchorElement | null;
           if (!titleLink) continue;
 
@@ -191,18 +228,41 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
           const url = titleLink.href;
 
           const folderLink = row.querySelector(
-            "td.detail-cell a.folder-link",
+            "a.folder-link, span.folder-span",
           ) as HTMLElement | null;
           const folderName = folderLink?.textContent?.trim() || "";
 
-          results.push({ id, title, folderName, url });
+          // td.list-date holds the recording date and, in a nested .time div,
+          // the time of day. Only the date is wanted, and taking the cell's
+          // whole textContent would run the two together.
+          let date = "";
+          const dateCell = row.querySelector("td.list-date:not(.shared-with-me-date)");
+          if (dateCell) {
+            for (const part of dateCell.querySelectorAll("div")) {
+              if (part.classList.contains("time")) continue;
+              const text = (part.textContent || "").trim();
+              // Skip an unrendered binding expression.
+              if (text.length > 0 && !text.includes("{")) {
+                date = text;
+                break;
+              }
+            }
+          }
+
+          results.push({ id, title, folderName, url, date });
         }
         return results;
       });
 
     // Collect items across all scroll positions, deduplicating by ID
     const seenIds = new Set<string>();
-    const allItems: Array<{ id: string; title: string; folderName: string; url: string }> = [];
+    const allItems: Array<{
+      id: string;
+      title: string;
+      folderName: string;
+      url: string;
+      date: string;
+    }> = [];
 
     const addItems = (batch: typeof allItems) => {
       for (const item of batch) {
@@ -230,8 +290,16 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
 
     // Filter and enrich
     const newLectures: ScrapedLecture[] = [];
+    let backfilled = 0;
     for (const item of items) {
-      if (lectureExists(item.id)) continue;
+      const recordedAt = parseListingDate(item.date);
+
+      if (lectureExists(item.id)) {
+        // Already tracked, but possibly from a scan that predates reading the
+        // Date column. The listing is right in front of us, so take the date.
+        if (recordedAt && backfillRecordedAt(item.id, recordedAt)) backfilled++;
+        continue;
+      }
 
       const courseCode = extractCourseCode(item.folderName, item.title);
       const downloadUrl = buildDownloadUrl(item.id);
@@ -243,10 +311,21 @@ export async function scrapePanopto(): Promise<ScrapedLecture[]> {
         courseCode,
         panoptoUrl: item.url,
         downloadUrl,
+        recordedAt,
       });
     }
 
-    log.info(`${newLectures.length} new lecture(s) to process`);
+    if (backfilled > 0) {
+      log.info(`Filled in a recording date for ${backfilled} lecture(s) already tracked`);
+    }
+    const withDates = newLectures.filter((l) => l.recordedAt !== null).length;
+    log.info(`${newLectures.length} new lecture(s) to process, ${withDates} with a recording date`);
+    if (newLectures.length > 0 && withDates === 0) {
+      log.warn(
+        "No recording dates were readable — weeks will be worked out from lecture titles instead. " +
+          "Run the Panopto table view probe to see what the listing page returned.",
+      );
+    }
     return newLectures;
   } finally {
     // Closing the context is not enough. On the storage-state path,
@@ -285,5 +364,6 @@ export function toNewLecture(scraped: ScrapedLecture): NewLecture {
     courseCode: scraped.courseCode,
     panoptoUrl: scraped.panoptoUrl,
     downloadUrl: scraped.downloadUrl,
+    recordedAt: scraped.recordedAt,
   };
 }

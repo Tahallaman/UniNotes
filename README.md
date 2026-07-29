@@ -255,8 +255,8 @@ otherwise have typed and streams its output live.
 | Tab | What's there |
 |---|---|
 | **Run** | Every pipeline action, each labelled with the live count that decides whether it'll do anything ("3 videos in Incoming/", "5 lectures pending"). Health checks for ffmpeg, your Panopto site, both browser sessions and gcloud credentials. Setup, probes, maintenance. Live console with cancel. |
-| **Library** | Every lecture, filterable by course, status and text, plus "missing pretty only". Select any number and process, prettify, reset, ignore or forget them. Click one for details, resume state, links and a rendered preview of its notes. |
-| **Settings** | Institution, providers, models, prompts, concurrency, timeouts, browser mode, Google Cloud. |
+| **Library** | Every lecture, filterable by course, status and text, plus "missing pretty only". Tick **Watched** to keep track of what you've been through, and see the teaching **Week** each one falls in. Select any number and process, prettify, reset, ignore or forget them. Click one for details, resume state, links, a date you can correct, and a rendered preview of its notes — or, when the video is on disk, a full-window player with the notes synced to it. |
+| **Settings** | Institution, providers, models, prompts, concurrency, timeouts, browser mode, player, Google Cloud. |
 | **Schedule** | Windows Task Scheduler entries, with presets for once/twice daily and hourly. |
 
 <picture>
@@ -271,14 +271,155 @@ how far a part-processed lecture got.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
-  <img alt="The Settings tab: Panopto host, per-stage backend, and model IDs, with 'changed from default' marking overrides." src="docs/images/settings.png">
+  <img alt="The Settings tab: collapsible groups for the Panopto host, per-stage backends and model IDs, each with its own Reset." src="docs/images/settings.png">
 </picture>
 
-Settings save to `settings.json` and merge over the defaults in `config.ts`.
-Anything you've overridden is marked *changed from default*. Changes apply on the
-next run.
+Settings save to `settings.json` and merge over the defaults in `config.ts`, and
+apply on the next run. Groups start collapsed — open the one you want, and use
+its **Reset** link to put just that group back to its defaults.
 
 Design notes and wireframes: [docs/gui-design.md](docs/gui-design.md).
+
+### Watching a lecture against its notes
+
+The **Video** column in the library says where each lecture stands: `fetch` to
+download the recording, `play` once it's there, `—` when there's nothing to be
+done. Press `play` — or **Play video** in a lecture's details — and the panel
+gives the whole window over to a player: the recording on one side, the notes on
+the other, kept in step. Everything else opens as the usual side panel, so the
+folder, the date, the week and the per-lecture actions are always one click away.
+
+Both need notes. The player is notes synced to a recording, so without them
+there's no highlight, nothing to click to seek by, and nothing a gigabyte of
+download would buy you.
+
+- **The notes follow the video.** Whatever is being said now is highlighted, and
+  scrubbing moves the highlight with you.
+- **Clicking a paragraph jumps there.** Any block with a timestamp above it is a
+  target, not just the `[12:34]` itself, and it lands a couple of seconds early
+  so you hear the run-up.
+- **Scrolling never moves the video.** Reading ahead is free. Scrolling does turn
+  auto-scrolling off, and the pill under the video turns it back on and takes you
+  to wherever playback has got to.
+
+- **A Transcript tab** beside Pretty and Raw, from Panopto's own captions,
+  synced the same way — it highlights and scrolls line by line as the lecture
+  plays, and clicking a line jumps there.
+- **Subtitles on the video**, the same transcript, on the Subtitles button.
+  Their size is under **Settings → Player**; the browser's own default is meant
+  for a television across a room and swallows the bottom of the slide.
+- **Ask about what you're watching.** See below.
+- **Turn the sync off** with the Synced button when you'd rather just read.
+  Nothing highlights, nothing scrolls itself, a click is a click — the video
+  simply plays beside the notes.
+- **Swap sides** whenever you like. The button under the video moves the notes
+  to the other side and remembers it, so you don't go to Settings to decide
+  something that depends on the lecture in front of you.
+- **Drag the divider** to resize. The text fills the column you give it, so
+  widening the notes buys you more words rather than wider margins. Double-click
+  the divider to go back to the default — a comfortable reading measure. Drag it
+  right down when you'd rather watch than read; it won't go wide enough to
+  squeeze the video out.
+- **Full screen**, top right, takes the whole screen for the video *and* the
+  notes — unlike the video's own fullscreen button, which loses the notes.
+
+The jump lead-in and whether videos are kept are under **Settings → Player**,
+along with the side, the column width and the sync.
+
+The control panel follows your system's light or dark mode, and the button in
+the top right of the masthead overrides it. That choice is kept in the browser,
+not in `settings.json` — which theme suits the room you're in isn't a fact about
+your notes pipeline.
+
+The video has to be a local file. Panopto's pages send
+`frame-ancestors 'self' https:`, so they refuse to embed in a page served over
+`http://127.0.0.1`, and its embed API offers only a polled current time — a file
+served by UniNotes itself seeks exactly and works offline.
+
+**Nothing fetched from Panopto accumulates.** Recordings and transcripts alike go
+to `temp/video-cache/`, which UniNotes empties when the control panel starts and
+again when it stops. Fetching them back takes seconds, so there's nothing to
+manage and nothing to clean up.
+
+By default the pipeline still deletes a recording once its notes are written.
+Two ways to get one:
+
+- **`fetch` in the library's Video column**, or **Fetch video for the player** in
+  a lecture's details — downloads it again for a lecture you've already
+  processed. This is the usual way.
+- **Settings → Player → Keep the video after processing** — newly processed
+  lectures go straight to the cache. Worth knowing: a full run with this on holds
+  every lecture's recording until you close the panel.
+
+The startup sweep is also the crash safety net, since a hard kill never runs the
+shutdown path. One consequence: if you run the pipeline from the command line
+with *keep* on and only then open the control panel, its startup sweep clears
+what that run cached. Starting jobs from the panel — the normal way — keeps them
+for the session.
+
+A video you dropped in `Incoming/` yourself is different: it's archived beside
+its notes as `lecture.<ext>`, it's your own file rather than a copy of something
+on Panopto, and it is never swept.
+
+Fetching a video also fetches Panopto's captions, and those go into the same
+cache and are swept with it. A transcript is small enough that keeping it would
+cost nothing, but it's just as much a copy of something on Panopto — and one rule
+is easier to remember than two: **your notes are permanent, anything fetched back
+from Panopto is not.**
+
+### Asking about the lecture while you watch it
+
+Stopped because you didn't follow something? Two ways to ask:
+
+- **The Explain button** under the video asks about wherever playback has got to.
+- **Highlight a passage** in Pretty, Raw or Transcript and a small *Explain this*
+  button appears at the selection.
+
+The answer opens in a panel below the video — the notes stay whole — and you can
+keep asking from the box at the bottom. The small button beside Explain opens
+that panel without asking anything, for when you want to type your own question
+or re-read the last answer. **Clear** starts over. Drag the panel's top edge to
+resize it, or double-click that edge to put it back.
+
+By default each question carries the section the passage is in **and the one
+before it** — a lecturer sets something up and then makes the point, so what
+explains a passage is often in the passage before — grown outwards to about 1400
+characters, adjustable under **Settings → Explain**. For a question that spans the lecture ("how does
+this connect to the first half?"), **Send the whole lecture** includes the entire
+file with your next question and then goes back to normal. One press, one send:
+25 KB with every question is slow and buries what you asked about. Note that the
+lecture material is rebuilt for each question, so a follow-up inherits the
+model's answer rather than the document behind it — press it again if a later
+question needs the lot again.
+
+A highlighted passage is explained against the part of the lecture *it* belongs
+to, not wherever the video happens to be sitting, so reading ahead works the way
+you'd expect.
+
+**This needs a Google Cloud project** — see [Two backends](#two-backends). It
+calls Vertex directly rather than going through the pipeline, because the browser
+backend takes minutes per answer and holds the pipeline lock while it does; the
+button says so if you haven't set one up. It's independent of which backend you
+prettify with: you can generate notes through the browser and still ask questions
+through Vertex.
+
+**What it sends:** the lecture's title, topics and summary from the top of your
+notes, the part of the notes around the passage in question, and the lecturer's
+words leading up to it if you've fetched the transcript. The summary is what
+lets it answer "how does this fit into the rest of the lecture?" — everything
+else it sees is a window a few minutes wide. Every answer says underneath it
+exactly what went with the question. This is the same
+exposure the notes pipeline already involves — it sends the recording itself —
+but a button that fires on a text selection makes it easy to send something
+without thinking about it, so the panel tells you.
+
+**Settings → Explain** controls the model, how much goes with each question, and
+which of the pretty notes, the raw notes and the transcript are included.
+**Settings → Prompts → Explain rules** is the answering style: nothing parses the
+reply, so that one is entirely yours.
+
+The conversation is never written to disk. It's a scratch conversation about a
+lecture, not part of it, and closing the drawer ends it.
 
 ### Two extra commands the GUI relies on
 
@@ -353,40 +494,81 @@ same file.
 
 ### Export notes
 
+Two destinations, run separately. `Exports/` is a local mirror the tool owns;
+the study folder is yours, and the two usually want different layouts.
+
 ```bash
-npm run export              # both Raw and Pretty
+npm run export              # → Exports/, both Raw and Pretty
 npm run export -- --raw     # raw only
 npm run export -- --pretty  # pretty only
+
+npm run sync                # → your study folder, pretty notes only
+npm run sync -- --dry-run   # list every destination, write nothing
 ```
 
 ```
 Exports/
   Raw/<CourseCode>/Lecture 01 - <CourseCode> - <title>.md
   Pretty/<CourseCode>/Lecture 01 - <CourseCode> - <title>.md
+
+<your study folder>/
+  <Term>/<CourseCode>/Week <n>/Lectures/<Name>.md
 ```
 
-Exported notes lead with the lecture number so a folder of them sorts into
-lecture order — in Obsidian, in Explorer, anywhere the list is alphabetical.
-Panopto titles put the number wherever the department felt like it, or leave it
-out entirely, so the number is read out of the title where it states one and
-taken from the order the lectures were delivered where it doesn't:
+Both paths come from templates you control — see **Terms and weeks** below.
+Nothing at either destination is deleted, and only one thing is ever moved: a
+note UniNotes itself put there, when you change a template and it now belongs
+under a different name. That keeps a template change from leaving every note
+twice in the folder you read. Files you filed, renamed or wrote yourself are
+never touched, and a name already taken is never overwritten — the old copy
+stays and the run says so. `npm run sync -- --dry-run` lists every move before
+any of it happens.
+
+### Terms and weeks
+
+Each lecture is filed into a teaching week worked out from its date. The date
+comes from Panopto's own Date column where there is one, otherwise from the
+lecture title, and you can correct it by hand in the Library.
+
+Set your terms up in **Settings → Terms & weeks**. A term is a name, a start
+date, a number of teaching weeks, and optionally a mid-term break — which is
+worth entering, because without it every lecture after the break is numbered
+two or three weeks too high. Terms are whatever your year divides into:
+semesters, trimesters, quarters, summer school. Add as many as you like, across
+as many years as you like.
+
+**Folder** is the level a term adds to the path. Leave it blank for the term
+you're in, so its courses stay at the top of your study folder, and set it to
+something like `Semester 1` for one you've archived.
+
+Names and folders are templates. The tokens are `{course}` `{title}`
+`{rawTitle}` `{date}` `{week}` `{week2}` `{number}` `{number2}` `{term}`
+`{termLabel}` `{year}`, and anything that can't be worked out drops out along
+with the punctuation around it — so an undated lecture is named
+`COMPSYS 730 - Lecture 4.md`, not `COMPSYS 730 - Lecture 4 - .md`, and skips the
+week folder rather than landing in one named after the problem. `{week}` and
+`{number}` are available for filenames but aren't in the default. Settings shows
+where three of your real lectures would go as you type.
+
+`{number}` is which lecture of its course this is, so a folder of notes sorts in
+the order the lectures were given rather than by whatever the department typed
+first. It comes from the title where the title states one — "Lecture 3", "L03C"
+— and from date order where it doesn't, filling the gaps around the stated ones.
+`{number2}` pads it to two digits, which is what keeps lecture 10 after lecture
+9 in an alphabetical list.
+
+`Exports/` leads with it by default, because a course folder there holds a whole
+semester flat and an alphabetical list is the only order you get. The second copy
+doesn't: its notes sit a handful to a Week folder, where sorting isn't the
+problem being solved.
 
 ```
-ENGGEN 403 [21 July] Lecture 1 What can ENGGEN 403 do for me
-  → Lecture 01 - ENGGEN 403 - [21 July] What can ENGGEN 403 do for me.md
-
-[423-348] SOFTENG 761 L01CSOFTENG 761 L02C - Mon 20 Jul 0200 PM (NZT)
-  → Lecture 01 - SOFTENG 761 - Mon 20 Jul 0200 PM (NZT).md
-
-SOFTENG 753 - Tue 21 Jul - Introduction & What is Deep Learning   (no number)
-  → Lecture 01 - SOFTENG 753 - Tue 21 Jul - Introduction & What is Deep Learning.md
+Lecture {number2} - {course} - {title}
+  → Lecture 01 - ENGGEN 403 - What can ENGGEN 403 do for me.md
 ```
 
-The same name is used for the second copy (see **Configuration → Second copy**),
-and notes already exported under the old name are renamed in place rather than
-duplicated. `Lectures/` keeps the recording's own title either way — that title
-is how a lecture is recognised as already processed. Turn the whole thing off
-with `exportNaming.enabled`.
+Don't want any of it? Turn **Sort into weeks** off. No terms to configure, no
+week folders; tidy names still apply.
 
 ### Scheduling
 
@@ -429,13 +611,24 @@ control panel) or in environment variables, which win over both.
 | `vertex.generation.pretty.model` | `gemini-3.6-flash` | Model for prettifying |
 | `vertex.location` | `global` | 3.x Flash models are only served on `global` |
 | `vertex.cleanupUploads` | true | Delete GCS chunks after each part |
-| `exportNaming.enabled` | true | Put the lecture number first in exported names |
-| `exportNaming.numberDigits` | 2 | Width it's padded to, so 10 sorts after 9 |
+| `terms.enabled` | true | Work out a teaching week for each lecture |
+| `terms.list` | *(empty)* | Your terms — name, start date, weeks, optional break |
+| `naming.fileTemplate` | `{course} - {title} - {date}` | How a note file is named |
+| `exports.folderTemplate` | `{course}` | Folders below `Exports/Raw/` and `Exports/Pretty/` |
+| `exports.fileTemplate` | `Lecture {number2} - {course} - {title}` | Leads with the lecture number so a course folder sorts in order |
 | `workspace.enabled` | false | Keep a second copy of each pretty note elsewhere |
 | `workspace.root` | `~/Documents/UniNotes` | Where that copy goes |
+| `workspace.folderTemplate` | `{term}/{course}/Week {week}/Lectures` | Folders in that copy |
+| `workspace.fileTemplate` | *(inherits)* | Blank uses `naming.fileTemplate` |
+| `workspace.syncOnWrite` | true | Copy as each note is written, not only on `npm run sync` |
+| `explain.enabled` | true | The Explain button in the player. Needs `vertex.project` |
+| `explain.contextChars` | 1400 | How much of the notes around a question to send |
+| `explain.include.*` | pretty, subtitles | Which copies of the lecture go with a question |
+| `explain.model` | `gemini-3.6-flash` | Model for answers |
 | `prompts.grounding` | `prompts/notes-grounding.txt` | Opens every notes prompt |
 | `prompts.coverage` | `prompts/notes-coverage.txt` | What the notes should contain |
 | `prompts.prettyRules` | `prompts/pretty-notes.txt` | The prettifier's rules |
+| `prompts.explain` | `prompts/explain.txt` | How Explain answers |
 
 Setting every `concurrency` value to 1 reproduces fully sequential behaviour,
 which is the first thing to try when debugging.
@@ -450,6 +643,7 @@ files are the defaults; the panel overrides them.
 | Grounding rules | Prepended to every notes prompt. The anti-invention instruction: it makes the model describe *this* recording rather than recite what it knows about a course with that name. |
 | What to cover | The contents and style of the notes. Shared by the single-video, middle-part and final-part prompts. |
 | Prettifier rules | Applied to finished raw notes. Safe to rewrite wholesale. |
+| Explain rules | How "Explain this" answers — tone, length, what to do when the notes don't cover the question. The lecture material is assembled and appended automatically. Nothing parses the reply, so this one is entirely yours. |
 
 Two pieces of every notes prompt are deliberately not settings and stay in
 `src/gemini/prompts.ts`: the timestamp contract, which `src/utils/timestamps.ts`
@@ -578,7 +772,7 @@ src/
   main.ts              # Panopto pipeline entry point
   panopto/             # scraper, downloader, URL builders
   gemini/              # uploader, prompter, prompts, browser pool, Vertex client
-  notes/               # parser, writer, prettifier, export naming
+  notes/               # parser, writer, prettifier
   db/                  # SQLite schema + tracker
   todo/                # TODO.md manager
   pipeline/            # shared per-lecture flow, part runner, checkpoints, pretty backfill
@@ -597,12 +791,13 @@ scripts/
   test-attachment-detect.ts  # regression test for the attachment check
   test-timestamps.ts   # regression test for timestamp rebasing
   test-blank-detect.ts # regression test for blank-segment detection
-  test-export-names.ts # regression test for exported note filenames
   export-notes.ts      # export to Exports/
+  sync-workspace.ts    # copy to your study folder, by term and week
 prompts/               # editable prompt defaults, see Configuration → Prompts
   notes-grounding.txt  # "watch the video, don't invent"
   notes-coverage.txt   # what the notes should contain
   pretty-notes.txt     # prettifier formatting rules
+  explain.txt          # how "Explain this" answers
 docs/
   gui-design.md        # control panel scoping + wireframes
   images/              # screenshots used by this README
@@ -628,9 +823,11 @@ lecture titles, session cookies and your own configuration never end up in a
 commit.
 
 Videos and notes are sent to Google, via your signed-in Gemini session on the
-`browser` backend or Vertex AI on the `api` backend. Lecture recordings are
-usually your institution's copyright and may contain other students' voices and
-names. Check what your institution's policy allows before running this on
+`browser` backend or Vertex AI on the `api` backend. **Explain this** sends notes
+and transcript to Vertex too, and says under each answer exactly what went with
+the question; it can be switched off entirely at **Settings → Explain**. Lecture
+recordings are usually your institution's copyright and may contain other
+students' voices and names. Check what your institution's policy allows before running this on
 anything, and think twice before publishing the output.
 
 ## Platform support

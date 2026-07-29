@@ -49,6 +49,20 @@ export function subscriptionsUrl(): string {
   return requireBaseUrl() + CONFIG.panopto.subscriptionsPath;
 }
 
+/**
+ * The same listing in table view, which is the only view with a Date column.
+ *
+ * Panopto routes on the fragment, so the view is *added* to whatever is already
+ * there rather than replacing it — dropping "#isSubscriptionsPage=true" for
+ * "#view=0" would silently widen the scrape from your subscriptions to every
+ * folder on the tenant.
+ */
+export function tableViewUrl(): string {
+  const base = subscriptionsUrl();
+  if (/[#&]view=/.test(base)) return base;
+  return base.includes("#") ? `${base}&view=${CONFIG.panopto.tableViewId}` : `${base}#view=${CONFIG.panopto.tableViewId}`;
+}
+
 /** Watch page for one recording — used as the download request's Referer. */
 export function viewerUrl(id: string): string {
   return `${requireBaseUrl()}/Panopto/Pages/Viewer.aspx?id=${id}`;

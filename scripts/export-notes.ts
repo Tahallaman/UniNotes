@@ -1,5 +1,10 @@
 /**
- * Export lecture notes into flat course-level folders.
+ * Copy lecture notes into Exports/.
+ *
+ * Exports/ only — the workspace copy is `scripts/sync-workspace.ts`, run
+ * separately. They were one loop until the two destinations grew different
+ * layouts, at which point "export" meaning two things made it impossible to
+ * redo one without redoing the other.
  *
  * Usage:
  *   npx tsx scripts/export-notes.ts          # export both raw + pretty
@@ -10,16 +15,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { syncToWorkspace } from "../src/utils/workspaceSync.js";
+import { CONFIG } from "../config.js";
+import { listLectures } from "../src/gui/library.js";
+import { destinationFor, lectureNumbersByCourse } from "../src/notes/organise.js";
 import {
-  exportNamesForCourse,
-  legacyExportName,
-  renameStaleExport,
-} from "../src/notes/exportName.js";
-
-const ROOT = path.resolve(import.meta.dirname!, "..");
-const LECTURES_DIR = path.join(ROOT, "Lectures");
-const EXPORTS_DIR = path.join(ROOT, "Exports");
+  readLedger,
+  writeLedger,
+  moveRecorded,
+  legacyPath,
+  type Ledger,
+} from "../src/notes/exportLedger.js";
 
 const args = process.argv.slice(2);
 const exportRaw = args.length === 0 || args.includes("--raw");
@@ -65,67 +70,91 @@ function copyIfNeeded(src: string, dest: string): void {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
   copied++;
-  console.log(`COPIED: ${path.relative(ROOT, dest)}`);
+  console.log(`COPIED: ${path.relative(CONFIG.rootDir, dest)}`);
 }
 
 /**
- * Move any copy exported under the pre-numbering name onto the new one.
+ * Move a note we wrote before onto the name we're writing now.
  *
- * Without this, turning the numbering on means every note exists twice in the
- * folder you actually read — once under each scheme, with identical contents.
- * Renaming is confined to the exact name this script wrote before, so nothing
- * you filed or renamed yourself is touched.
+ * Only files this script recorded, and only when the name has changed — see
+ * src/notes/exportLedger.ts for why that restriction is the whole design.
  */
-function migrateLegacyName(dir: string, lecture: string, destFilename: string): void {
-  const result = renameStaleExport(dir, legacyExportName(lecture), destFilename);
-  if (result === "renamed") {
+function migrate(root: string, ledger: Ledger, key: string, next: string, lectureDirName: string, courseCode: string): void {
+  const recorded = ledger[key] ?? legacySeed(root, courseCode, lectureDirName);
+  if (!recorded) return;
+
+  const outcome = moveRecorded(root, recorded, next);
+  if (outcome.kind === "moved") {
     renamed++;
-    console.log(`RENAMED: ${path.relative(ROOT, path.join(dir, destFilename))}`);
-  } else if (result === "conflict") {
+    console.log(`RENAMED: ${outcome.from}  ->  ${outcome.to}`);
+  } else if (outcome.kind === "blocked") {
     console.warn(
-      `LEFT BEHIND: ${path.relative(ROOT, path.join(dir, legacyExportName(lecture)))} ` +
-        `— a file already exists under the new name; delete whichever you don't want.`,
+      `LEFT BEHIND: ${outcome.from} — something already sits at ${outcome.to}; ` +
+        `delete whichever you don't want.`,
     );
   }
 }
 
-// Walk Lectures/<Course>/<LectureTitle>/
-for (const course of fs.readdirSync(LECTURES_DIR)) {
-  const courseDir = path.join(LECTURES_DIR, course);
-  if (!fs.statSync(courseDir).isDirectory()) continue;
-
-  // Named a course at a time: a lecture whose title states no number is
-  // numbered by where it falls among its siblings.
-  const exportNames = exportNamesForCourse(course, courseDir);
-
-  for (const lecture of fs.readdirSync(courseDir)) {
-    const lectureDir = path.join(courseDir, lecture);
-    if (!fs.statSync(lectureDir).isDirectory()) continue;
-
-    const destFilename = exportNames.get(lecture) ?? legacyExportName(lecture);
-
-    if (exportRaw) {
-      const rawSrc = path.join(lectureDir, "lecture.raw.md");
-      const rawDir = path.join(EXPORTS_DIR, "Raw", course);
-      migrateLegacyName(rawDir, lecture, destFilename);
-      copyIfNeeded(rawSrc, path.join(rawDir, destFilename));
-    }
-
-    if (exportPretty) {
-      const prettySrc = path.join(lectureDir, "lecture.pretty.md");
-      const prettyDir = path.join(EXPORTS_DIR, "Pretty", course);
-      migrateLegacyName(prettyDir, lecture, destFilename);
-      copyIfNeeded(prettySrc, path.join(prettyDir, destFilename));
-
-      // Also sync to University workspace (non-fatal)
-      try {
-        syncToWorkspace(course, prettySrc);
-      } catch (syncErr) {
-        console.warn(`[SYNC] Workspace sync failed for ${course}/${lecture}: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
-      }
-    }
-  }
+/** The pre-template name, but only if a file is really sitting under it. */
+function legacySeed(root: string, courseCode: string, lectureDirName: string): string | null {
+  const candidate = legacyPath(courseCode, lectureDirName);
+  return fs.existsSync(path.join(root, candidate)) ? candidate : null;
 }
+
+// The library rather than a directory walk: it already merges the database with
+// the disk, which is what gets a hand-corrected date onto a lecture whose folder
+// name still says otherwise.
+const entries = listLectures().filter((e) => e.lectureDir);
+const numbers = lectureNumbersByCourse(
+  entries.map((e) => ({ key: e.key, title: e.title, courseCode: e.courseCode, date: e.lectureDate })),
+);
+
+const roots = {
+  Raw: path.join(CONFIG.paths.exports, "Raw"),
+  Pretty: path.join(CONFIG.paths.exports, "Pretty"),
+};
+const ledgers = { Raw: readLedger(roots.Raw), Pretty: readLedger(roots.Pretty) };
+
+for (const entry of entries) {
+  if (!entry.lectureDir) continue;
+
+  const destination = destinationFor(
+    {
+      title: entry.title,
+      courseCode: entry.courseCode,
+      resolvedDate: entry.lectureDate,
+      resolvedSource: entry.dateSource,
+      lectureNumber: numbers.get(entry.key) ?? null,
+    },
+    {
+      folderTemplate: CONFIG.exports.folderTemplate,
+      fileTemplate: CONFIG.exports.fileTemplate || CONFIG.naming.fileTemplate,
+    },
+    CONFIG.terms.list,
+    CONFIG.terms.enabled,
+  );
+
+  // Resolved once above, then rooted twice — Raw and Pretty are the same tree
+  // with a different top, and deriving them separately invites them to drift.
+  const relative = [...destination.segments, destination.filename].join("/");
+  const lectureDirName = path.basename(entry.lectureDir);
+
+  // Migrate before copying, or the copy lands at the new name first and the old
+  // one is then a file we'd refuse to move onto an occupied path.
+  const write = (kind: "Raw" | "Pretty", source: string) => {
+    migrate(roots[kind], ledgers[kind], entry.key, relative, lectureDirName, entry.courseCode);
+    copyIfNeeded(path.join(entry.lectureDir!, source), path.join(roots[kind], relative));
+    // Recorded whether or not the copy was needed: the point is where the note
+    // is, not whether this run is what put it there.
+    ledgers[kind][entry.key] = relative;
+  };
+
+  if (exportRaw) write("Raw", "lecture.raw.md");
+  if (exportPretty) write("Pretty", "lecture.pretty.md");
+}
+
+writeLedger(roots.Raw, ledgers.Raw);
+writeLedger(roots.Pretty, ledgers.Pretty);
 
 console.log(
   `\nExport complete: ${scanned} scanned, ${copied} copied, ${skipped} up-to-date` +
