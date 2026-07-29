@@ -40,6 +40,8 @@ export interface SystemStatus {
   pendingPrettyCount: number;
   /** Lecture count per database status, for the waiting list. */
   lectureCounts: Record<string, number>;
+  /** Where the second copy goes, so the Run tab can say whether it's usable. */
+  workspace: { enabled: boolean; root: string };
   lock: { held: boolean; pid: number | null; alive: boolean };
   temp: { bytes: number; orphanParts: number; checkpoints: number };
   checks: HealthCheck[];
@@ -277,6 +279,7 @@ export async function getStatus(): Promise<SystemStatus> {
     incomingCount: countIncomingVideos(),
     pendingPrettyCount: findPendingPretty().length,
     lectureCounts: lectureCounts(),
+    workspace: { enabled: effective.workspace.enabled, root: effective.workspace.root },
     lock: readLock(),
     temp: {
       bytes: dirSize(CONFIG.paths.temp),

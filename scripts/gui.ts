@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { startServer, stopServer } from "../src/gui/server.js";
 import { ensureDirectories } from "../src/utils/paths.js";
 import { getDb, closeDb } from "../src/db/schema.js";
+import { clearVideoCache, type CacheSweep } from "../src/utils/videoCache.js";
 
 const args = process.argv.slice(2);
 const portArg = args.find((a) => a.startsWith("--port="));
@@ -20,6 +21,16 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 ensureDirectories();
+
+function reportSweep(when: string, swept: CacheSweep): void {
+  if (swept.files === 0) return;
+  const gb = (swept.bytes / 1024 ** 3).toFixed(2);
+  console.log(`  Cleared ${swept.files} cached video${swept.files === 1 ? "" : "s"} (${gb} GB) ${when}.`);
+}
+
+// Swept at both ends, not just on exit: a crash or a kill -9 never runs the
+// shutdown path, and the cache is exactly the thing that must not survive one.
+reportSweep("from the last session", clearVideoCache());
 
 // Create/migrate the database once here, up front. Everything the GUI does
 // afterwards reads through a read-only connection, which cannot create the file
@@ -60,6 +71,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("\nShutting down...");
-    stopServer(server).finally(() => process.exit(0));
+    stopServer(server)
+      .finally(() => reportSweep("on shutdown", clearVideoCache()))
+      .finally(() => process.exit(0));
   });
 }

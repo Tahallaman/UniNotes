@@ -31,7 +31,16 @@ import { effectiveConfig, DEFAULTS } from "./effective.js";
 import { jobs, JOB_DEFINITIONS, getJobDefinition } from "./jobs.js";
 import { listLectures, summarize, readNotes, closeLibraryDb } from "./library.js";
 import { getStatus, clearLock, cleanTempParts, clearCheckpoints } from "./status.js";
-import { resetForRetry, forgetLectures, assertInsideLectures } from "./mutations.js";
+import {
+  resetForRetry,
+  forgetLectures,
+  setWatched,
+  setLectureDate,
+  assertInsideLectures,
+} from "./mutations.js";
+import { destinationFor, validateTerms } from "../notes/organise.js";
+import { serveVideo, serveCaptions } from "./video.js";
+import { explain, ExplainUnavailableError } from "./explain.js";
 import {
   listTasks,
   createTask,
@@ -146,6 +155,42 @@ function settingsPayload() {
   };
 }
 
+/**
+ * Is a submitted value the default?
+ *
+ * `===` answers this for every scalar setting, but the term list is an array —
+ * never identical by reference, so an untouched list would be written back to
+ * settings.json as an "override" of itself and then reported as changed from
+ * default forever. Structural comparison for those, identity for the rest.
+ */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Put one group of settings back to its defaults.
+ *
+ * Drops those keys from settings.json rather than writing the default values
+ * into it — a setting whose override is the default is still an override, and
+ * would go stale the day the default changes.
+ */
+function resetGroup(group: string): { cleared: number } {
+  const paths = new Set(SETTING_FIELDS.filter((f) => f.group === group).map((f) => f.path));
+  if (paths.size === 0) throw new Error(`No settings group called "${group}".`);
+
+  const overrides = readSettingsFile();
+  let cleared = 0;
+  for (const key of Object.keys(overrides)) {
+    if (!paths.has(key)) continue;
+    delete overrides[key];
+    cleared++;
+  }
+  if (cleared > 0) writeSettingsFile(overrides);
+  return { cleared };
+}
+
 function saveSettings(body: Record<string, unknown>): { saved: string[]; errors: string[] } {
   const submitted = (body.values ?? {}) as Record<string, unknown>;
   const overrides = readSettingsFile();
@@ -172,7 +217,7 @@ function saveSettings(body: Record<string, unknown>): { saved: string[]; errors:
     // An unset value is stored as null so the file still records the intent to
     // override rather than silently reverting to the default.
     const defaultValue = getByPath(DEFAULTS, dotted);
-    if (result.value === defaultValue) {
+    if (sameValue(result.value, defaultValue)) {
       delete overrides[dotted];
     } else {
       overrides[dotted] = result.value === undefined ? null : result.value;
@@ -186,6 +231,86 @@ function saveSettings(body: Record<string, unknown>): { saved: string[]; errors:
   else writeSettingsFile(overrides);
 
   return { saved, errors };
+}
+
+// ── Naming preview ────────────────────────────────────────────────────────────
+
+/**
+ * Where real lectures would land under the templates currently in the form.
+ *
+ * Computed here, by the same functions that do the writing, rather than
+ * reimplemented in the page's JavaScript. Two free-text templates are only safe
+ * to offer if you can see what they do before you save them, and a preview that
+ * is a second implementation is one that eventually disagrees with the writer.
+ *
+ * Takes the *submitted* values rather than the saved ones, so the preview
+ * updates as you type instead of after you commit.
+ */
+function namingPreview(body: Record<string, unknown>): unknown {
+  const submitted = (body.values ?? {}) as Record<string, unknown>;
+  const config = effectiveConfig();
+
+  const pick = <T>(path: string, fallback: T): T =>
+    (submitted[path] === undefined ? fallback : submitted[path]) as T;
+
+  const terms = pick("terms.list", config.terms.list);
+  const weeksEnabled = pick("terms.enabled", config.terms.enabled);
+  const fileTemplate = pick("naming.fileTemplate", config.naming.fileTemplate);
+
+  const destinations = [
+    {
+      name: "Exports",
+      folderTemplate: pick("exports.folderTemplate", config.exports.folderTemplate),
+      fileTemplate: pick("exports.fileTemplate", config.exports.fileTemplate) || fileTemplate,
+      root: "Exports/Pretty",
+    },
+    {
+      name: "Your folder",
+      folderTemplate: pick("workspace.folderTemplate", config.workspace.folderTemplate),
+      fileTemplate: pick("workspace.fileTemplate", config.workspace.fileTemplate) || fileTemplate,
+      root: pick("workspace.root", config.workspace.root),
+    },
+  ];
+
+  // Real lectures, not invented ones: a preview against "Sample Lecture 1"
+  // proves nothing about the titles this actually has to cope with. Newest
+  // first, and one without a date if there is one, since that is the case whose
+  // behaviour is hardest to predict from the template alone.
+  const all = listLectures().filter((e) => e.courseCode && e.title);
+  const dated = all.filter((e) => e.lectureDate !== null).slice(0, 3);
+  const undated = all.find((e) => e.lectureDate === null);
+  const samples = undated ? [...dated.slice(0, 2), undated] : dated;
+
+  return {
+    problems: validateTerms(terms as never),
+    samples: samples.map((entry) => ({
+      title: entry.title,
+      courseCode: entry.courseCode,
+      date: entry.lectureDate,
+      dateSource: entry.dateSource,
+      week: entry.week,
+      termLabel: entry.termLabel,
+      paths: destinations.map((destination) => {
+        const result = destinationFor(
+          {
+            title: entry.title,
+            courseCode: entry.courseCode,
+            resolvedDate: entry.lectureDate,
+            resolvedSource: entry.dateSource,
+          },
+          { folderTemplate: destination.folderTemplate, fileTemplate: destination.fileTemplate },
+          terms as never,
+          weeksEnabled as boolean,
+        );
+        return {
+          name: destination.name,
+          root: destination.root,
+          path: [...result.segments, result.filename].join("/"),
+          week: result.placement.week,
+        };
+      }),
+    })),
+  };
 }
 
 // ── Job launching ─────────────────────────────────────────────────────────────
@@ -329,13 +454,26 @@ async function handleApi(
       return;
     }
 
-    case "POST /api/settings/reset":
+    case "POST /api/settings/reset": {
+      // A group name resets that group; no group resets the lot.
+      const group = typeof body.group === "string" ? body.group : "";
+      if (group) {
+        const { cleared } = resetGroup(group);
+        sendJson(res, 200, {
+          message: cleared === 0
+            ? `${group} was already at its defaults.`
+            : `${group} reset to defaults — ${cleared} setting${cleared === 1 ? "" : "s"} put back.`,
+          settings: settingsPayload(),
+        });
+        return;
+      }
       deleteSettingsFile();
       sendJson(res, 200, {
         message: "Reset to the defaults in config.ts. Takes effect on the next run.",
         settings: settingsPayload(),
       });
       return;
+    }
 
     case "POST /api/jobs/start":
       sendJson(res, 200, { job: startJob(body) });
@@ -400,6 +538,47 @@ async function handleApi(
       return;
     }
 
+    case "POST /api/lectures/watched": {
+      const watched = body.watched === true;
+      const changed = setWatched(stringArray(body.ids), watched);
+      sendJson(res, 200, {
+        changed,
+        message: `Marked ${changed} lecture${changed === 1 ? "" : "s"} as ${watched ? "watched" : "not watched"}.`,
+      });
+      return;
+    }
+
+    case "POST /api/naming/preview":
+      sendJson(res, 200, namingPreview(body));
+      return;
+
+    case "POST /api/lectures/date": {
+      const raw = body.date;
+      const date = raw === null || raw === "" || raw === undefined ? null : String(raw);
+      setLectureDate(String(body.id ?? ""), date);
+      sendJson(res, 200, {
+        message: date === null ? "Date cleared — worked out from the recording again." : `Date set to ${date}.`,
+      });
+      return;
+    }
+
+    // The one route that does its work in-process rather than spawning a job.
+    // See src/gui/explain.ts for why, and for what that costs.
+    case "POST /api/explain": {
+      try {
+        sendJson(res, 200, await explain(body));
+      } catch (err) {
+        if (err instanceof ExplainUnavailableError) {
+          // 503, not 500: nothing is broken, the feature just isn't available to
+          // you yet, and the message says what to do about it.
+          sendJson(res, 503, { error: err.message });
+          return;
+        }
+        throw err;
+      }
+      return;
+    }
+
     case "POST /api/lectures/forget": {
       const removed = forgetLectures(stringArray(body.ids));
       sendJson(res, 200, {
@@ -446,6 +625,19 @@ export function startServer(port = DEFAULT_PORT): Promise<http.Server> {
 
     if (url.pathname === "/api/events") {
       handleEvents(req, res);
+      return;
+    }
+
+    // Ahead of handleApi because this one answers with bytes, not JSON, and has
+    // to see the Range header rather than a parsed body.
+    if (url.pathname === "/api/video") {
+      serveVideo(req, res, url.searchParams.get("key") ?? "");
+      return;
+    }
+
+    // Also ahead of handleApi: a <track> element wants text/vtt, not JSON.
+    if (url.pathname === "/api/subtitles") {
+      serveCaptions(res, url.searchParams.get("key") ?? "");
       return;
     }
 

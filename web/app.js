@@ -7,6 +7,12 @@ const state = {
   status: null,
   jobs: [],
   settings: { fields: [], values: {}, overridden: [] },
+  /**
+   * Which settings groups are expanded. Session-only and deliberately so —
+   * where you were up to in a form is not a fact about your notes pipeline, and
+   * every group starts closed so the page is an index rather than a wall.
+   */
+  settingsOpen: new Set(),
   draft: {},          // setting path → pending value
   tasks: [],
   schedulable: [],
@@ -18,6 +24,8 @@ const state = {
   running: false,
   drawerKey: null,
   noteTab: "pretty",
+  preview: null,     // last naming preview, or null before the first one
+  termProblems: [],  // validation messages keyed to a term id
 };
 
 // ── API ──────────────────────────────────────────────────────────────────────
@@ -258,9 +266,25 @@ function renderExtras() {
       onAction: () => startJob("local"),
     }),
     renderRow({
-      text: "Copy notes to Exports/ and the workspace folder",
+      text: "Copy notes to Exports/",
       label: "Export",
       onAction: () => startJob("export"),
+    }),
+    renderRow({
+      text: "Copy pretty notes to your study folder",
+      note: s.workspace?.enabled
+        ? `Filed by week into ${s.workspace.root}`
+        : "Switch on Settings → Second copy to use this.",
+      label: "Copy",
+      disabled: !s.workspace?.enabled,
+      onAction: () => startJob("sync-workspace"),
+    }),
+    renderRow({
+      text: "Check where those copies would land",
+      note: "Lists every destination path. Writes nothing.",
+      label: "Preview",
+      disabled: !s.workspace?.enabled,
+      onAction: () => startJob("sync-workspace-dry"),
     }),
     renderRow({
       text: "Rewrite every pretty note",
@@ -582,6 +606,21 @@ function renderLibrary() {
       el("span", { class: entry.hasPretty ? "yes" : "no", text: "pretty" }),
     );
     tr.append(el("td", { class: "c-files" }, files));
+    tr.append(el("td", { class: "c-video" }, videoControl(entry)));
+
+    // The week, and enough of why to act on it being wrong: a lecture with no
+    // date shows the gap rather than an empty cell you'd read as "week unknown,
+    // nothing to be done about it".
+    const week = el("span", {
+      class: entry.week === null ? "week none" : "week",
+      text: entry.week === null ? (entry.lectureDate ? "—" : "no date") : `Week ${entry.week}`,
+      title: entry.lectureDate
+        ? `${entry.lectureDate} (from ${entry.dateSource})${entry.termLabel ? ` · ${entry.termLabel}` : " · outside every term"}`
+        : "No date found. Open the lecture to set one.",
+    });
+    tr.append(el("td", { class: "c-week" }, week));
+
+    tr.append(el("td", { class: "c-watched" }, watchedControl(entry)));
     tr.append(el("td", { class: "c-when", text: formatWhen(entry.updatedAt) }));
 
     return tr;
@@ -596,6 +635,92 @@ function renderLibrary() {
   const shown = entries.map((e) => e.key);
   document.getElementById("lib-all").checked =
     shown.length > 0 && shown.every((k) => state.selection.has(k));
+}
+
+/**
+ * Watch, or fetch something to watch, straight from the row.
+ *
+ * A column rather than a button two clicks deep in the drawer. Playing a lecture
+ * against its notes is the most useful thing the panel does and it was the least
+ * findable: nothing in the list said a recording existed, or could, so it was
+ * only ever discovered by opening a lecture and reading the buttons. Here it
+ * sits beside Notes in the list you already scan, in the same shape — a couple
+ * of quiet words per row, one of which lights up when it's live.
+ */
+function videoControl(entry) {
+  if (!canWatch(entry)) {
+    return el("span", {
+      class: "video-na",
+      text: "—",
+      title: "The player syncs notes to the recording, so it needs notes first.",
+    });
+  }
+
+  if (entry.hasVideo) {
+    const play = el("button", {
+      class: "video-link ready",
+      text: "play",
+      title: "Watch this lecture with its notes beside it",
+    });
+    play.addEventListener("click", () => openDrawer(entry.key, true));
+    return play;
+  }
+
+  if (!entry.id || !entry.lectureDir || !entry.panoptoUrl) {
+    return el("span", {
+      class: "video-na",
+      text: "—",
+      title: "No Panopto recording to fetch for this one.",
+    });
+  }
+
+  const fetchVideo = el("button", {
+    class: "video-link",
+    text: "fetch",
+    title: "Download the recording so you can watch it against these notes",
+  });
+  fetchVideo.addEventListener("click", guard(() =>
+    startJob("fetch-video", { selection: { ids: [entry.id], dirs: [] } }),
+  ));
+  return fetchVideo;
+}
+
+/**
+ * The Watched tick for one lecture.
+ *
+ * Applied optimistically and put back if the write fails, so ticking a box feels
+ * immediate. Nothing else is re-rendered: a full renderLibrary() here would
+ * rebuild the row under the pointer mid-click for no visible gain.
+ *
+ * A folder with no database row has nowhere to record this, so it gets a dash
+ * that says why rather than a box that silently forgets.
+ */
+function watchedControl(entry) {
+  if (!entry.id) {
+    return el("span", {
+      class: "watched-na",
+      text: "—",
+      title: "Not tracked in the database, so this can't be saved.",
+    });
+  }
+
+  const box = el("input");
+  box.type = "checkbox";
+  box.className = "watched-box";
+  box.checked = entry.watched;
+  box.title = "Mark as watched";
+  box.addEventListener("change", async () => {
+    const wanted = box.checked;
+    entry.watched = wanted;
+    try {
+      await post("/api/lectures/watched", { ids: [entry.id], watched: wanted });
+    } catch (err) {
+      entry.watched = !wanted;
+      box.checked = !wanted;
+      toast(err.message, "bad");
+    }
+  });
+  return box;
 }
 
 document.getElementById("lib-search").addEventListener("input", (e) => {
@@ -676,14 +801,21 @@ document.getElementById("lib-actions").addEventListener("click", guard(async (ev
 
 // ── Drawer ───────────────────────────────────────────────────────────────────
 
-function openDrawer(key) {
+/**
+ * Open a lecture.
+ *
+ * The side panel always, unless you asked to watch. Opening straight into the
+ * full-window player because a video happened to be cached took the decision
+ * away from you: the panel is how you get at the folder, the date, the week and
+ * every per-lecture action, and it was unreachable for exactly the lectures you
+ * had done the most with. Watching is now a thing you press.
+ */
+function openDrawer(key, play = false) {
   state.drawerKey = key;
   const entry = state.entries.find((e) => e.key === key);
   if (!entry) return;
 
   document.getElementById("drawer-title").textContent = entry.title;
-  document.getElementById("drawer-sub").textContent =
-    `${entry.courseCode} · ${entry.status} · ${entry.source}`;
 
   const facts = document.getElementById("drawer-meta");
   facts.replaceChildren();
@@ -693,8 +825,15 @@ function openDrawer(key) {
     facts.append(el("dd", {}, typeof value === "string" ? document.createTextNode(value) : value));
   };
 
+  // These three were the header's second line until it cost more than it told.
+  fact("Course", entry.courseCode);
+  fact("Status", entry.status);
+  fact("Source", entry.source);
   fact("Folder", entry.lectureDir || "not written yet");
   fact("Updated", formatWhen(entry.updatedAt, true));
+  if (entry.id) fact("Date", dateControl(entry));
+  if (entry.week !== null) fact("Week", `${entry.termLabel} · week ${entry.week}`);
+  else if (entry.lectureDate) fact("Week", "Its date falls outside every term you've set up.");
   if (entry.errorMessage) fact(entry.status === "blank" ? "Skipped" : "Error", entry.errorMessage);
   if (entry.checkpoint) fact("Resume", `${entry.checkpoint.done} of ${entry.checkpoint.total} parts checkpointed`);
   if (entry.panoptoUrl) fact("Panopto", link(entry.panoptoUrl, "Open recording"));
@@ -724,19 +863,115 @@ function openDrawer(key) {
     }));
     actions.append(process);
   }
+  // The player is notes synced to a recording, so a lecture with no notes has
+  // nothing to sync and nothing to watch them against. Gating both the download
+  // and the playback on that keeps the feature from looking broken on a row it
+  // was never going to work for.
+  if (canWatch(entry)) {
+    if (entry.hasVideo) {
+      // Solid: once there's a video, watching it is the thing you came for.
+      const play = el("button", { class: "btn btn-solid", text: "Play video" });
+      play.addEventListener("click", () => openDrawer(entry.key, true));
+      actions.append(play);
+    } else if (entry.id && entry.lectureDir && entry.panoptoUrl) {
+      // Offered rather than automatic: fetching a video is a browser-driven
+      // download measured in gigabytes, so it happens when you ask for it.
+      const fetchVideo = el("button", { class: "btn", text: "Fetch video for the player" });
+      fetchVideo.addEventListener("click", guard(async () => {
+        closeDrawer();
+        await startJob("fetch-video", { selection: { ids: [entry.id], dirs: [] } });
+      }));
+      actions.append(fetchVideo);
+    }
+  }
   facts.append(actions);
 
+  // The transcript stands on its own — it's a file beside the notes, so the tab
+  // is offered whether or not there's a video to sync it to.
+  const transcriptTab = document.querySelector('.drawer-tab[data-note="transcript"]');
+  transcriptTab.hidden = !entry.hasCaptions;
+  if (!entry.hasCaptions && state.noteTab === "transcript") state.noteTab = "pretty";
+  document.querySelectorAll(".drawer-tab").forEach((t) =>
+    t.classList.toggle("current", t.dataset.note === state.noteTab),
+  );
+
   document.getElementById("drawer").hidden = false;
+  setupPlayer(entry, play);
   loadNotes();
+}
+
+/**
+ * Is there anything to watch this lecture against?
+ *
+ * The player is notes synced to a recording. Without notes there is no sync, no
+ * highlight, nothing to click to seek by — just a video in a panel, which is
+ * what the Panopto link already gives you.
+ */
+function canWatch(entry) {
+  return entry.hasRaw || entry.hasPretty;
+}
+
+/**
+ * The date a lecture's week is derived from, and a box to correct it.
+ *
+ * The only manual input in an otherwise automatic chain, so it says where the
+ * current value came from: "from title" is a guess worth checking, "from
+ * panopto" rarely is. Clearing the box gives the guess back rather than leaving
+ * the lecture dateless.
+ */
+function dateControl(entry) {
+  const wrap = el("div", { class: "date-edit" });
+
+  const input = el("input", { class: "field" });
+  input.type = "date";
+  input.value = entry.lectureDate ?? "";
+  input.addEventListener("change", guard(async () => {
+    const value = input.value || null;
+    const result = await post("/api/lectures/date", { id: entry.id, date: value });
+    toast(result.message);
+    await refreshLibrary();
+    const updated = state.entries.find((e) => e.key === entry.key);
+    // Reopened in whatever mode it was in — correcting a date shouldn't throw
+    // you out of the player you were watching in.
+    if (updated) openDrawer(updated.key, player.active);
+    refreshPreview();
+  }));
+  wrap.append(input);
+
+  wrap.append(el("span", {
+    class: "date-source",
+    text: entry.lectureDate
+      ? entry.dateOverride ? "set by you" : `from ${entry.dateSource}`
+      : "nothing to go on — set one",
+  }));
+
+  if (entry.dateOverride) {
+    const clear = el("button", { class: "link-btn", text: "Use the detected date" });
+    clear.addEventListener("click", guard(async () => {
+      toast((await post("/api/lectures/date", { id: entry.id, date: null })).message);
+      await refreshLibrary();
+      const updated = state.entries.find((e) => e.key === entry.key);
+      if (updated) openDrawer(updated.key);
+      refreshPreview();
+    }));
+    wrap.append(clear);
+  }
+
+  return wrap;
 }
 
 function closeDrawer() {
   document.getElementById("drawer").hidden = true;
   state.drawerKey = null;
+  teardownPlayer();
 }
 
+// closest(), not the target itself: the close button is an icon, so a click in
+// the middle of it lands on a <path> and never on the element carrying
+// data-close. It worked while the icon was small enough that most of the button
+// was padding, which is not a thing to depend on.
 document.getElementById("drawer").addEventListener("click", (event) => {
-  if (event.target.dataset?.close !== undefined) closeDrawer();
+  if (event.target.closest?.("[data-close]")) closeDrawer();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !document.getElementById("drawer").hidden) closeDrawer();
@@ -754,12 +989,1148 @@ async function loadNotes() {
   if (!state.drawerKey) return;
   target.replaceChildren(el("p", { class: "console-idle", text: "Loading…" }));
   try {
-    const data = await get(`/api/notes?key=${encodeURIComponent(state.drawerKey)}&which=${state.noteTab}`);
-    target.replaceChildren(renderMarkdown(data.content));
+    if (state.noteTab === "transcript") {
+      const vtt = await getText(`/api/subtitles?key=${encodeURIComponent(state.drawerKey)}`);
+      target.replaceChildren(renderTranscript(vtt));
+    } else {
+      const data = await get(`/api/notes?key=${encodeURIComponent(state.drawerKey)}&which=${state.noteTab}`);
+      target.replaceChildren(renderMarkdown(data.content));
+    }
+    syncNotes();
   } catch (err) {
     target.replaceChildren(el("p", { class: "console-idle", text: err.message }));
   }
 }
+
+/** Plain-text GET. /api/subtitles answers with WebVTT, not JSON. */
+async function getText(path) {
+  const res = await fetch(path, { headers: { "x-uninotes": "1" } });
+  const body = await res.text();
+  if (!res.ok) throw new Error(body || `Request failed (${res.status})`);
+  return body;
+}
+
+// ── Transcript ───────────────────────────────────────────────────────────────
+
+/** "HH:MM:SS.mmm" → seconds. NaN if it isn't one. */
+function vttTime(value) {
+  const m = /^(\d{2}):(\d{2}):(\d{2})[.,](\d{1,3})$/.exec(value.trim());
+  if (!m) return NaN;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000;
+}
+
+/**
+ * WebVTT → the same shape of document the notes tabs produce.
+ *
+ * Each cue becomes a block carrying its own timestamp chip, so the existing sync
+ * machinery picks it up unchanged — one cue per group means the highlight tracks
+ * the transcript line by line, which is exactly what a transcript is for.
+ *
+ * Consecutive cues are merged while they're short, because Panopto's
+ * auto-transcript breaks on breath rather than on sense, and a wall of two-second
+ * fragments is unreadable. The merged block keeps the *first* cue's time, so
+ * clicking it still lands where that sentence began.
+ */
+function renderTranscript(vtt) {
+  const container = el("div", { class: "transcript" });
+  const cues = [];
+
+  for (const block of vtt.replace(/\r\n/g, "\n").split(/\n{2,}/)) {
+    const lines = block.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length === 0 || /^WEBVTT/.test(lines[0])) continue;
+    const timingIndex = lines.findIndex((l) => l.includes("-->"));
+    if (timingIndex === -1) continue;
+
+    const [from] = lines[timingIndex].split("-->");
+    const start = vttTime(from);
+    if (!Number.isFinite(start)) continue;
+
+    const text = lines.slice(timingIndex + 1).join(" ").trim();
+    if (text) cues.push({ start, text });
+  }
+
+  if (cues.length === 0) {
+    container.append(el("p", { class: "console-idle", text: "This transcript has no readable lines." }));
+    return container;
+  }
+
+  container.append(el("p", {
+    class: "transcript-note",
+    text: "Auto-generated by Panopto. Expect the odd mangled name or term.",
+  }));
+
+  const MERGE_UNDER = 220;
+  const merged = [];
+  for (const cue of cues) {
+    const last = merged[merged.length - 1];
+    if (last && last.text.length < MERGE_UNDER) last.text += ` ${cue.text}`;
+    else merged.push({ start: cue.start, text: cue.text });
+  }
+
+  const html = merged
+    .map((cue) => `<p><span class="ts">[${escapeHtml(clockText(cue.start))}]</span> ${escapeHtml(cue.text)}</p>`)
+    .join("");
+
+  const body = el("div");
+  body.innerHTML = html;
+  container.append(body);
+  return container;
+}
+
+// ── Player ───────────────────────────────────────────────────────────────────
+
+/**
+ * The video and the notes, kept in step.
+ *
+ * One rule shapes the whole thing: **scrolling is passive, clicking is active.**
+ * Reading ahead while a lecture plays must never drag the video somewhere, so no
+ * scroll handler ever seeks — only a click does. The reverse direction, the
+ * video moving the notes, is opt-in and switches itself off the moment you
+ * scroll, because a page that scrolls out from under you while you're reading it
+ * is worse than one that never scrolls at all.
+ *
+ * The video is the local file, not Panopto. Panopto's pages send
+ * `frame-ancestors 'self' https:` and so refuse to embed in a page served over
+ * http://127.0.0.1, and its embed API exposes only a polled current time. A file
+ * served by our own server seeks exactly and works offline. See src/gui/video.ts.
+ */
+const player = {
+  /** False when the drawer has no video, which disables every handler below. */
+  active: false,
+  /**
+   * Whether the notes and the video are tied together at all.
+   *
+   * Off, this is just the notes with a video beside them: nothing highlights,
+   * nothing scrolls itself, and a click is a click rather than a seek. Worth
+   * having as one switch because the sync is an opinion about how you read, and
+   * sometimes you only want to read.
+   */
+  sync: true,
+  /** [{ time, blocks }] in document order — one entry per distinct timestamp. */
+  groups: [],
+  /** Index into groups of whatever is playing now, or -1 before the first. */
+  current: -1,
+  follow: true,
+  /** When we last scrolled the notes ourselves, so we don't read it as yours. */
+  autoScrollAt: 0,
+  /** And where we scrolled it to — the surer half of the same test. */
+  autoScrollTo: -1,
+  /** Measured narrowest sensible notes column, in px — the drag floor. */
+  notesFit: 0,
+  /**
+   * The lead-in window a click opened, as [from, until) in seconds.
+   *
+   * Clicking a note seeks a couple of seconds *before* its timestamp, which by
+   * the plain rule ("last group at or before now") lights up the previous group
+   * — you click one paragraph and a different one highlights. So a click pins
+   * its own group for exactly the run-up it asked for. Bounded at both ends, not
+   * just the top: scrubbing away during those seconds has to break the pin, or
+   * the highlight would sit frozen wherever the click left it.
+   */
+  pinFrom: 0,
+  pinUntil: 0,
+};
+
+const videoEl = document.getElementById("player-video");
+const notesEl = document.getElementById("drawer-notes");
+
+/** Blocks that can carry a time. Deliberately not nested in each other. */
+const TIME_BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, tr";
+const HEADINGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+
+/** "12:34" or "1:02:03" → seconds. Null if it isn't one. */
+function parseClock(text) {
+  const bits = text.trim().split(":").map((n) => parseInt(n, 10));
+  if (bits.length < 2 || bits.some((n) => !Number.isFinite(n))) return null;
+  if (bits.length === 2) return bits[0] * 60 + bits[1];
+  if (bits.length === 3) return bits[0] * 3600 + bits[1] * 60 + bits[2];
+  return null;
+}
+
+function clockText(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  const pad = (n) => String(n).padStart(2, "0");
+  const hours = Math.floor(s / 3600);
+  const rest = `${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  return hours > 0 ? `${hours}:${rest}` : rest;
+}
+
+/** The seconds a block's own timestamp names, or null. Ranges give their start. */
+function ownTime(block) {
+  const chip = block.querySelector(".ts");
+  if (!chip) return null;
+  const first = chip.textContent.replace(/[[\]]/g, "").split(/[-–—]/)[0];
+  return parseClock(first);
+}
+
+/**
+ * Give every block a time and a group, and return the groups.
+ *
+ * Most blocks carry no timestamp of their own — the model stamps the start of a
+ * point and then writes several bullets under it — so unstamped blocks inherit
+ * from the stamped one above. Headings are the exception: a heading introduces
+ * what follows, so it takes the time of the next stamped block instead. Without
+ * that, entering a new section leaves its title highlighted with the section you
+ * just left, which reads as if the highlight is lagging.
+ */
+function stampTimes(root) {
+  const blocks = [...root.querySelectorAll(TIME_BLOCKS)];
+  const times = blocks.map(ownTime);
+
+  for (let i = 0; i < blocks.length; i++) {
+    if (times[i] !== null || !HEADINGS.has(blocks[i].tagName)) continue;
+    for (let j = i + 1; j < blocks.length; j++) {
+      if (times[j] !== null) { times[i] = times[j]; break; }
+    }
+  }
+
+  let carry = null;
+  for (let i = 0; i < times.length; i++) {
+    if (times[i] === null) times[i] = carry;
+    else carry = times[i];
+  }
+
+  const groups = [];
+  blocks.forEach((block, i) => {
+    if (times[i] === null) return;
+    const last = groups[groups.length - 1];
+    if (last && last.time === times[i]) last.blocks.push(block);
+    else groups.push({ time: times[i], blocks: [block] });
+    block.dataset.t = String(times[i]);
+    // The index, not just the time: two groups can share a timestamp if the
+    // model repeats one, and a click has to know which of them you meant.
+    block.dataset.g = String(groups.length - 1);
+  });
+
+  return groups;
+}
+
+/** Re-read the notes now showing and hook them to the video. */
+function syncNotes() {
+  notesEl.removeAttribute("data-synced");
+  player.groups = [];
+  player.current = -1;
+  player.pinUntil = 0;
+  if (!player.active) return;
+
+  player.groups = stampTimes(notesEl);
+  if (player.groups.length === 0 || !player.sync) return;
+
+  // Only now does anything become clickable, so notes with no timestamps in them
+  // never grow a pointer cursor over text that would do nothing.
+  notesEl.dataset.synced = "";
+  highlightAt(videoEl.currentTime);
+}
+
+/**
+ * Put the passage being spoken in the middle of the pane.
+ *
+ * The whole group, not its first block: a point can run to a heading and a dozen
+ * bullets, and centring only the opening line leaves the rest of what's being
+ * said pushed below the fold. A group taller than the pane can't be centred
+ * without hiding its start, so that one centres its first block instead and lets
+ * the rest run on below.
+ *
+ * Runs only when the group changes, so following along doesn't mean re-centring
+ * four times a second.
+ */
+function centreOnGroup(group) {
+  const pane = notesEl.getBoundingClientRect();
+  const first = group.blocks[0].getBoundingClientRect();
+  const last = group.blocks[group.blocks.length - 1].getBoundingClientRect();
+
+  const top = first.top - pane.top + notesEl.scrollTop;
+  const bottom = last.bottom - pane.top + notesEl.scrollTop;
+  const anchor = bottom - top <= pane.height * 0.8
+    ? (top + bottom) / 2
+    : top + first.height / 2;
+
+  player.autoScrollAt = performance.now();
+  notesEl.scrollTop = anchor - pane.height / 2;
+  // Where we left it. The scroll event arrives later, and on a busy frame later
+  // can be longer than any timing window worth guessing at — so the handler
+  // recognises our own scroll by position rather than only by the clock.
+  player.autoScrollTo = notesEl.scrollTop;
+}
+
+function setCurrentGroup(index, scroll) {
+  if (index === player.current) return;
+  if (player.current >= 0) {
+    for (const block of player.groups[player.current].blocks) block.classList.remove("now");
+  }
+  player.current = index;
+  if (index < 0) return;
+
+  for (const block of player.groups[index].blocks) block.classList.add("now");
+  if (scroll && player.follow) centreOnGroup(player.groups[index]);
+}
+
+function highlightAt(seconds) {
+  if (!player.sync || player.groups.length === 0) return;
+  if (seconds >= player.pinFrom && seconds < player.pinUntil) return;
+  player.pinUntil = 0;
+
+  let index = -1;
+  for (let i = 0; i < player.groups.length; i++) {
+    if (player.groups[i].time <= seconds) index = i;
+  }
+  setCurrentGroup(index, true);
+}
+
+/**
+ * Turn the whole sync on or off.
+ *
+ * Off leaves the notes exactly as they read anywhere else in the panel — no
+ * highlight, no self-scrolling, no click-to-seek — while the video plays on
+ * beside them. Following is a setting *of* the sync, so it greys out rather than
+ * staying available as a control that would do nothing.
+ */
+function setSync(on) {
+  player.sync = on;
+  const button = document.getElementById("player-sync");
+  button.setAttribute("aria-pressed", String(on));
+  button.querySelector(".chip-label").textContent = on ? "Synced" : "Not synced";
+  document.getElementById("player-follow").disabled = !on;
+
+  if (on) {
+    if (player.groups.length > 0) notesEl.dataset.synced = "";
+    highlightAt(videoEl.currentTime);
+    return;
+  }
+
+  notesEl.removeAttribute("data-synced");
+  if (player.current >= 0) {
+    for (const block of player.groups[player.current].blocks) block.classList.remove("now");
+  }
+  // Forgotten, not remembered: switching back on should light up wherever the
+  // video has got to by then, not wherever it was when you switched off.
+  player.current = -1;
+  player.pinUntil = 0;
+}
+
+function setFollow(on) {
+  player.follow = on;
+  const button = document.getElementById("player-follow");
+  button.setAttribute("aria-pressed", String(on));
+  // The label says what the button will do, not only what is true now: once you
+  // have scrolled away, "jump back" is the thing you're looking for.
+  button.querySelector(".chip-label").textContent = on ? "Following" : "Jump to now";
+  button.title = on
+    ? "The notes scroll themselves to keep up with the video"
+    : "Scroll back to where the video has got to, and follow along again";
+}
+
+function jumpToNow() {
+  if (player.current < 0) return;
+  centreOnGroup(player.groups[player.current]);
+}
+
+function seekTo(seconds, groupIndex) {
+  const lead = Number(state.settings.values["player.seekLeadIn"] ?? 2);
+  videoEl.currentTime = Math.max(0, seconds - lead);
+  setFollow(true);
+
+  if (groupIndex >= 0) {
+    player.pinFrom = videoEl.currentTime;
+    player.pinUntil = seconds;
+    // No scroll: you clicked it, so it is already under your eye. Recentring
+    // the page on the thing you just pointed at only moves it away from you.
+    setCurrentGroup(groupIndex, false);
+  }
+
+  // Clicking a note is a request to hear it. Autoplay policy can still refuse,
+  // in which case the seek has happened and you press play yourself.
+  videoEl.play().catch(() => {});
+}
+
+function setupPlayer(entry, play) {
+  const body = document.getElementById("drawer-body");
+  body.dataset.side = state.settings.values["player.notesSide"] === "left" ? "left" : "right";
+
+  teardownPlayer();
+  // Opt-in. A cached video is not by itself a request to watch one.
+  if (!play || !entry.hasVideo || !canWatch(entry)) return;
+
+  // Folded away every time a lecture opens rather than remembered: you come here
+  // to watch, and the facts are two seconds away when you want them.
+  document.getElementById("drawer").dataset.details = "off";
+  const details = document.getElementById("drawer-details");
+  details.hidden = false;
+  details.querySelector(".head-btn-label").textContent = "Details";
+  fullscreenBtn.hidden = false;
+  body.dataset.player = "on";
+
+  // Measure the fit — the floor for dragging. It's in ch, so it depends on the
+  // font and can only be read off a laid-out pane; pinning the width to the fit
+  // expression for one measurement is the cheapest honest way to get it.
+  body.style.setProperty("--notes-width", "var(--notes-fit)");
+  const fit = document.querySelector(".notes-pane").getBoundingClientRect().width;
+  body.style.removeProperty("--notes-width");
+  player.notesFit = Math.round(Math.min(fit, body.getBoundingClientRect().width - PANE_MIN));
+
+  // Clamped on the way in, not just on the way out: a width saved on a wide
+  // monitor would otherwise leave no room for the video on a laptop.
+  const saved = Number(state.settings.values["player.notesWidth"]) || 0;
+  applyNotesWidth(saved ? clampNotesWidth(saved) : defaultNotesWidth());
+  document.getElementById("player-pane").hidden = false;
+  player.active = true;
+  setFollow(true);
+  setSync(state.settings.values["player.sync"] !== false);
+  document.getElementById("player-clock").textContent = "00:00";
+  videoEl.src = `/api/video?key=${encodeURIComponent(entry.key)}`;
+  applySubtitles(entry);
+
+  // Offered rather than hidden when Vertex isn't set up: the refusal names what
+  // to configure, which is more use than a button that quietly isn't there.
+  const explainOff = state.settings.values["explain.enabled"] === false;
+  document.getElementById("player-explain").hidden = explainOff;
+  document.getElementById("player-explain-open").hidden = explainOff;
+  // The conversation belongs to this lecture from the moment it opens, not from
+  // the first question. Set lazily, arming "send the whole lecture" before
+  // asking anything looked like a fresh lecture and cleared itself.
+  explain.key = entry.key;
+}
+
+/**
+ * Attach this lecture's transcript to the video as a caption track.
+ *
+ * Same origin, which is the reason the file is fetched from Panopto and stored
+ * rather than linked: a cross-origin <track> needs CORS headers Panopto doesn't
+ * send, and fails silently when they're missing.
+ */
+function applySubtitles(entry) {
+  for (const old of [...videoEl.querySelectorAll("track")]) old.remove();
+
+  const cc = document.getElementById("player-cc");
+  cc.hidden = !entry.hasCaptions;
+  if (!entry.hasCaptions) return;
+
+  const track = document.createElement("track");
+  track.kind = "captions";
+  track.label = "Panopto transcript";
+  track.srclang = "en";
+  track.src = `/api/subtitles?key=${encodeURIComponent(entry.key)}`;
+  videoEl.append(track);
+
+  setSubtitles(state.settings.values["player.subtitles"] === true);
+}
+
+/**
+ * Write the subtitle size into a stylesheet of its own.
+ *
+ * ::cue matches inside the video's shadow tree, where a custom property set on
+ * the page does not reliably reach — so this can't be a `var()` in styles.css
+ * driven by a `style.setProperty`. A one-rule stylesheet rewritten in place is
+ * the version that works everywhere and can't half-apply.
+ *
+ * A percentage, because that is what `::cue { font-size }` is measured against:
+ * the browser's own default, which is sized for a television across a room.
+ */
+function applyCueSize(percent) {
+  let sheet = document.getElementById("cue-size");
+  if (!sheet) {
+    sheet = document.createElement("style");
+    sheet.id = "cue-size";
+    document.head.append(sheet);
+  }
+  const size = Math.min(100, Math.max(12, Number(percent) || 31));
+  sheet.textContent = `video::cue { font-size: ${size}%; }`;
+}
+
+function setSubtitles(on) {
+  const cc = document.getElementById("player-cc");
+  cc.setAttribute("aria-pressed", String(on));
+  // Every track, because a lecture only ever has one but a stale one from the
+  // previous lecture showing through would be worse than none.
+  for (const track of videoEl.textTracks) track.mode = on ? "showing" : "disabled";
+}
+
+function teardownPlayer() {
+  player.active = false;
+  player.groups = [];
+  player.current = -1;
+  player.pinUntil = 0;
+  document.getElementById("drawer-body").dataset.player = "off";
+  document.getElementById("drawer-details").hidden = true;
+  document.getElementById("drawer-fullscreen").hidden = true;
+  document.getElementById("player-cc").hidden = true;
+  document.getElementById("player-explain").hidden = true;
+  document.getElementById("player-explain-open").hidden = true;
+  document.getElementById("player-pane").hidden = true;
+
+  // The conversation goes with the lecture. It only ever lived here, and it was
+  // about where you were in a recording you have now closed.
+  explain.history = [];
+  explain.key = null;
+  explain.whole = false;
+  explain.wholeSent = false;
+  explainOpen(false);
+  hideExplainPop();
+
+  // Otherwise closing the drawer leaves an empty panel filling the screen.
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  notesEl.removeAttribute("data-synced");
+
+  // Pausing isn't enough. A src left in place keeps the request open and the
+  // decoder alive behind a closed drawer, and the next lecture would inherit the
+  // old one's position while its own file loads.
+  videoEl.pause();
+  videoEl.removeAttribute("src");
+  videoEl.load();
+}
+
+videoEl.addEventListener("timeupdate", () => {
+  document.getElementById("player-clock").textContent = clockText(videoEl.currentTime);
+  highlightAt(videoEl.currentTime);
+});
+// Fires while the scrubber is being dragged, which is what makes the notes move
+// as you scrub rather than only once you let go.
+videoEl.addEventListener("seeking", () => highlightAt(videoEl.currentTime));
+videoEl.addEventListener("error", () => {
+  if (player.active) toast("That video file couldn't be played. Chrome only handles MP4, WebM and MOV.", "bad");
+});
+
+// Any scroll that wasn't ours means you've taken over. Listening to `scroll`
+// rather than `wheel` covers the scrollbar, the keyboard and a trackpad alike;
+// the timestamp is what tells our own scrolling apart from yours.
+notesEl.addEventListener("scroll", () => {
+  if (!player.active || !player.follow) return;
+  // Ours, by position or by the clock. Either alone lets one through: the clock
+  // misses a scroll event delayed past its window, and the position alone would
+  // ignore a real scroll that happened to land where we last put it.
+  if (Math.abs(notesEl.scrollTop - player.autoScrollTo) < 2) return;
+  if (performance.now() - player.autoScrollAt < 350) return;
+  setFollow(false);
+}, { passive: true });
+
+notesEl.addEventListener("click", (event) => {
+  if (!player.active || !player.sync) return;
+  // A link is a link, and a click that finishes selecting text is a selection.
+  if (event.target.closest("a")) return;
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed) return;
+
+  const block = event.target.closest("[data-t]");
+  if (block) seekTo(Number(block.dataset.t), Number(block.dataset.g));
+});
+
+document.getElementById("player-follow").addEventListener("click", () => {
+  setFollow(!player.follow);
+  if (player.follow) jumpToNow();
+});
+
+document.getElementById("player-cc").addEventListener("click", guard(async () => {
+  const on = document.getElementById("player-cc").getAttribute("aria-pressed") !== "true";
+  setSubtitles(on);
+  const result = await post("/api/settings", { values: { "player.subtitles": on } });
+  state.settings = result.settings;
+  renderSettings();
+}));
+
+document.getElementById("player-sync").addEventListener("click", guard(async () => {
+  setSync(!player.sync);
+  const result = await post("/api/settings", { values: { "player.sync": player.sync } });
+  state.settings = result.settings;
+  renderSettings();
+}));
+
+// ── The split ────────────────────────────────────────────────────────────────
+
+/**
+ * Dragging the divider between the video and the notes.
+ *
+ * The default width isn't a share of the window — it's the width the notes
+ * already want, so the column holds its reading measure with no empty margins
+ * either side and the video gets everything left over. Dragging overrides that
+ * with a pixel width; double-clicking gives the fit back.
+ */
+const splitEl = document.getElementById("pane-split");
+/** How little of the window the video may be left with, in px. */
+const PANE_MIN = 240;
+/**
+ * How narrow the notes may be dragged, in px.
+ *
+ * Well under the reading measure on purpose. The fit was the floor at first, on
+ * the reasoning that a column narrower than a comfortable line isn't worth
+ * reading — but that is a judgement about reading, and shrinking the notes is
+ * usually a decision to stop reading them and watch the slide instead. So the
+ * floor is only "still legible", and the fit stays where it belongs: the width
+ * you get when you haven't asked for one, and the width double-click gives back.
+ */
+const NOTES_MIN = 180;
+let splitDrag = null;
+
+/**
+ * Bounds on the notes column: still legible, and never so wide that the video
+ * has nowhere to go.
+ */
+function clampNotesWidth(px) {
+  const body = document.getElementById("drawer-body");
+  const total = body.getBoundingClientRect().width;
+  const max = Math.max(NOTES_MIN, total - PANE_MIN);
+  return Math.round(Math.min(Math.max(px, NOTES_MIN), max));
+}
+
+/** `null` drops back to the CSS fallback, which is the bare fit. */
+function applyNotesWidth(px) {
+  const body = document.getElementById("drawer-body");
+  if (px) body.style.setProperty("--notes-width", `${px}px`);
+  else body.style.removeProperty("--notes-width");
+}
+
+/**
+ * The width to use when nothing has been dragged.
+ *
+ * A readable line at minimum, and about a third of the window wherever there's
+ * room for more — so a laptop gets the fit and a wide monitor gets real text
+ * without anyone reaching for the divider.
+ */
+function defaultNotesWidth() {
+  const total = document.getElementById("drawer-body").getBoundingClientRect().width;
+  return clampNotesWidth(Math.max(player.notesFit, Math.round(total * 0.32)));
+}
+
+function currentNotesWidth() {
+  return Math.round(document.querySelector(".notes-pane").getBoundingClientRect().width);
+}
+
+const saveNotesWidth = guard(async (px) => {
+  const result = await post("/api/settings", { values: { "player.notesWidth": px } });
+  state.settings = result.settings;
+  renderSettings();
+});
+
+splitEl.addEventListener("pointerdown", (event) => {
+  if (!player.active) return;
+  splitDrag = { x: event.clientX, width: currentNotesWidth(), moved: false };
+  // Capture keeps the drag alive when the pointer crosses the video, which
+  // otherwise swallows the moves. Not fatal if the pointer has already gone.
+  try {
+    splitEl.setPointerCapture(event.pointerId);
+  } catch {
+    // Nothing to capture; the move handler still works while over the divider.
+  }
+  document.getElementById("drawer-body").dataset.dragging = "on";
+  // Otherwise the drag starts a text selection in the notes instead.
+  event.preventDefault();
+});
+
+splitEl.addEventListener("pointermove", (event) => {
+  if (!splitDrag) return;
+  const dx = event.clientX - splitDrag.x;
+  // A press that never moves is a click, not a resize. Without this, brushing the
+  // divider pins the current width as a saved setting — and a pinned width stops
+  // the column ever sizing itself again.
+  if (!splitDrag.moved && Math.abs(dx) < 2) return;
+  splitDrag.moved = true;
+  // With the notes on the left the divider is to their right, so dragging right
+  // grows them; on the right it's the other way round.
+  const onLeft = document.getElementById("drawer-body").dataset.side === "left";
+  applyNotesWidth(clampNotesWidth(onLeft ? splitDrag.width + dx : splitDrag.width - dx));
+});
+
+for (const event of ["pointerup", "pointercancel"]) {
+  splitEl.addEventListener(event, () => {
+    if (!splitDrag) return;
+    const moved = splitDrag.moved;
+    splitDrag = null;
+    document.getElementById("drawer-body").dataset.dragging = "off";
+    if (moved) saveNotesWidth(currentNotesWidth());
+  });
+}
+
+// Double-click is the way back: a width you dragged by accident shouldn't need a
+// trip to Settings to undo.
+splitEl.addEventListener("dblclick", () => {
+  if (!player.active) return;
+  applyNotesWidth(null);
+  saveNotesWidth(0);
+});
+
+splitEl.addEventListener("keydown", (event) => {
+  if (!player.active) return;
+  const step = event.key === "ArrowLeft" ? -24 : event.key === "ArrowRight" ? 24 : 0;
+  if (step === 0) return;
+  event.preventDefault();
+  const onLeft = document.getElementById("drawer-body").dataset.side === "left";
+  applyNotesWidth(clampNotesWidth(currentNotesWidth() + (onLeft ? step : -step)));
+  saveNotesWidth(currentNotesWidth());
+});
+
+/**
+ * Swap which side the notes are on, from the player rather than from Settings.
+ *
+ * Which side you want depends on the lecture — slides dense on the left, a
+ * lecturer's face on the right — so it belongs next to the video, not two tabs
+ * away. It still writes the setting, because a preference you have to re-express
+ * every time isn't one.
+ */
+document.getElementById("player-swap").addEventListener("click", guard(async () => {
+  const body = document.getElementById("drawer-body");
+  const was = body.dataset.side;
+  const side = was === "left" ? "right" : "left";
+
+  // Flipped first: the layout is the feedback, and waiting on a round trip to a
+  // local server before moving would just look like a dropped click.
+  body.dataset.side = side;
+  try {
+    const result = await post("/api/settings", { values: { "player.notesSide": side } });
+    state.settings = result.settings;
+    // Keep the Settings tab honest — it shows the same value, and a control that
+    // disagreed with the one you just used would be worse than not having it.
+    renderSettings();
+  } catch (err) {
+    body.dataset.side = was;
+    throw err;
+  }
+}));
+
+// ── Explain ──────────────────────────────────────────────────────────────────
+
+/**
+ * Asking about the lecture while you're watching it.
+ *
+ * The conversation lives here and nowhere else. It is posted with each turn so
+ * the server stays stateless — the same shape as everything else in the panel,
+ * and no session store to expire — and it is never written to disk: this is a
+ * scratch conversation *about* a lecture, not an artefact *of* one. Closing the
+ * drawer ends it.
+ *
+ * Everything sent is assembled server-side from the lecture you have open. The
+ * page says where it is; it does not get to say what to send. See
+ * src/gui/explain.ts.
+ */
+const explain = {
+  /** [{ role: "user" | "model", text }] — the whole conversation, posted each turn. */
+  history: [],
+  /** One in flight at a time, so a double-press can't fork the conversation. */
+  busy: false,
+  /** The lecture the history belongs to, so an unrelated one can't inherit it. */
+  key: null,
+  /**
+   * Send the whole notes file with the next question — armed by the button,
+   * spent by the request that uses it.
+   *
+   * One press, one send, and that is the whole point of it being a button rather
+   * than a setting: 25 KB with every question is slow, dear, and buries what you
+   * asked about among everything you didn't. A question that genuinely spans the
+   * lecture — "how does this connect to the first half?" — needs it once.
+   */
+  whole: false,
+  /** Whether it has been sent in this conversation. Only changes the label. */
+  wholeSent: false,
+};
+
+const explainDock = document.getElementById("explain-dock");
+const explainSplitEl = document.getElementById("explain-split");
+const explainLog = document.getElementById("explain-log");
+const explainPop = document.getElementById("explain-pop");
+
+function explainOpen(on) {
+  explainDock.hidden = !on;
+  explainSplitEl.hidden = !on;
+  document.getElementById("player-explain-open").setAttribute("aria-pressed", String(on));
+  if (!on) return;
+  applyDockHeight(Number(state.settings.values["explain.dockHeight"]) || 0);
+  renderWholeButton();
+  if (explain.history.length === 0) renderExplain();
+}
+
+/**
+ * Armed, spent, or ready to arm.
+ *
+ * Spent doesn't mean disabled. Each turn is a fresh call and the lecture
+ * material rides in the system instruction, which is rebuilt every time — so
+ * what a follow-up inherits is the model's *answer*, not the document behind
+ * it. Locking the button after one use would leave a conversation that had lost
+ * the thing it was about with no way to get it back. One press, one send; press
+ * it again when a later question needs the lot again.
+ */
+function renderWholeButton() {
+  const button = document.getElementById("explain-whole");
+  button.textContent = explain.whole
+    ? "Whole lecture: on for the next question"
+    : explain.wholeSent
+      ? "Send the whole lecture again"
+      : "Send the whole lecture";
+  button.title = explain.whole
+    ? "Press again to go back to sending just the part you're on"
+    : "Include the whole lecture's notes with your next question, this once";
+}
+
+function renderExplain() {
+  explainLog.replaceChildren();
+  if (explain.history.length === 0) {
+    explainLog.append(el("p", {
+      class: "explain-idle",
+      text: "Ask about where you are in the lecture, or highlight a passage in the notes and click Explain this.",
+    }));
+    return;
+  }
+
+  for (const turn of explain.history) {
+    if (turn.role === "user") {
+      explainLog.append(el("div", { class: "explain-turn you", text: turn.text }));
+      continue;
+    }
+    const answer = el("div", { class: "explain-turn them" });
+    answer.append(renderMarkdown(turn.text));
+    explainLog.append(answer);
+    if (turn.sent) explainLog.append(el("p", { class: "explain-sent", text: turn.sent }));
+  }
+  explainLog.scrollTop = explainLog.scrollHeight;
+}
+
+/** "Sent the pretty notes, the transcript — 2,140 characters." */
+function describeSent(context) {
+  const parts = [];
+  if (context.overview) parts.push("the lecture summary");
+  // "in full" goes on the notes, not on the sentence — it's the notes that were
+  // sent whole, and the summary and transcript are what they always are.
+  if (context.pretty) parts.push(context.whole ? "the pretty notes in full" : "the pretty notes");
+  if (context.raw) parts.push(context.whole ? "the raw notes in full" : "the raw notes");
+  if (context.subtitles) parts.push("the transcript");
+  const what = parts.length === 0 ? "nothing but the lecture title" : parts.join(", ");
+  return `Sent ${what} — ${context.chars.toLocaleString()} characters.`;
+}
+
+/**
+ * Ask one question.
+ *
+ * The question goes into the log before the request, not after it: with several
+ * seconds of round trip, an input box that empties and then does nothing visible
+ * reads as a dropped click.
+ */
+async function askExplain({ question = "", selection = "", at = null } = {}) {
+  if (explain.busy || !state.drawerKey) return;
+  if (explain.key !== state.drawerKey) {
+    explain.history = [];
+    explain.key = state.drawerKey;
+    explain.whole = false;
+    explain.wholeSent = false;
+  }
+
+  explainOpen(true);
+  const shown = selection
+    ? `Explain this:\n\n${selection}${question ? `\n\n${question}` : ""}`
+    : question || "Explain what's being covered here.";
+  explain.history.push({ role: "user", text: shown });
+  renderExplain();
+
+  explainLog.append(el("p", { class: "explain-idle", text: "Thinking…" }));
+  explainLog.scrollTop = explainLog.scrollHeight;
+
+  explain.busy = true;
+  document.getElementById("explain-send").disabled = true;
+  // Spent on this request whether or not it succeeds is the wrong call — a
+  // failed send didn't reach the model, so the arming survives to be used by
+  // the retry.
+  const whole = explain.whole && !explain.wholeSent;
+  try {
+    const result = await post("/api/explain", {
+      whole,
+      key: state.drawerKey,
+      // The passage's own place in the lecture when there is one, the video's
+      // otherwise. See notesSelection().
+      atSeconds: Math.floor(at ?? videoEl.currentTime ?? 0),
+      question,
+      selection,
+      // Everything up to but not including the turn just pushed — the server
+      // builds that one itself from `question` and `selection`.
+      history: explain.history.slice(0, -1).map(({ role, text }) => ({ role, text })),
+    });
+    // The server's wording of the question, not the placeholder shown while it
+    // was thinking — so the history posted with the next turn is exactly the
+    // conversation the model had.
+    explain.history[explain.history.length - 1].text = result.ask;
+    explain.history.push({ role: "model", text: result.answer, sent: describeSent(result.context) });
+    if (result.context.whole) { explain.wholeSent = true; explain.whole = false; }
+    renderWholeButton();
+    renderExplain();
+  } catch (err) {
+    // The failed question stays in the log with the reason under it: dropping it
+    // would leave you re-typing something that might fail for the same reason.
+    renderExplain();
+    explainLog.append(el("p", { class: "explain-turn bad", text: err.message }));
+    explainLog.scrollTop = explainLog.scrollHeight;
+  } finally {
+    explain.busy = false;
+    document.getElementById("explain-send").disabled = false;
+  }
+}
+
+// Asks about right now, and spends a call doing it.
+document.getElementById("player-explain").addEventListener("click", () => askExplain());
+
+// Opens the panel and asks nothing.
+document.getElementById("player-explain-open").addEventListener("click", () => {
+  const open = explainDock.hidden;
+  explainOpen(open);
+  if (open) document.getElementById("explain-input").focus();
+});
+
+document.getElementById("explain-close").addEventListener("click", () => explainOpen(false));
+
+document.getElementById("explain-whole").addEventListener("click", () => {
+  explain.whole = !explain.whole;
+  renderWholeButton();
+  document.getElementById("explain-input").focus();
+});
+
+document.getElementById("explain-clear").addEventListener("click", () => {
+  explain.history = [];
+  // A new conversation hasn't been told anything, so the whole lecture is on
+  // offer again.
+  explain.whole = false;
+  explain.wholeSent = false;
+  renderWholeButton();
+  renderExplain();
+  document.getElementById("explain-input").focus();
+});
+
+document.getElementById("explain-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = document.getElementById("explain-input");
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = "";
+  askExplain({ question });
+});
+
+// ── The selection popover ────────────────────────────────────────────────────
+
+/**
+ * The selected text, but only when the whole selection is inside the notes.
+ *
+ * Also where in the lecture it came from. A passage you highlighted should be
+ * explained against the part of the lecture *it* belongs to, not against
+ * wherever the video happens to be sitting — you can read ahead, and being told
+ * "that isn't covered at this timestamp" about a paragraph you just pointed at
+ * is the feature failing. The blocks already carry data-t for click-to-seek, so
+ * the answer is right there.
+ */
+function notesSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!notesEl.contains(range.commonAncestorContainer)) return null;
+  const text = selection.toString().trim();
+  if (text.length <= 1) return null;
+
+  const node = range.startContainer;
+  const block = (node.nodeType === 1 ? node : node.parentElement)?.closest("[data-t]");
+  return { text, rect: range.getBoundingClientRect(), at: block ? Number(block.dataset.t) : null };
+}
+
+/**
+ * What the popover will send, captured when it appears rather than when it's
+ * clicked.
+ *
+ * Pressing a button is a mousedown somewhere outside the selection, and that
+ * collapses it — so by the time the click handler runs there is often nothing
+ * left to read. Holding the text is the difference between the button working
+ * and it silently doing nothing.
+ */
+let popSelection = null;
+
+function hideExplainPop() {
+  explainPop.hidden = true;
+  popSelection = null;
+}
+
+/**
+ * Put the button under the end of the selection, nudged back inside the window.
+ *
+ * Fixed positioning against the viewport rather than the notes column, because
+ * the column is a scroll box and an absolutely positioned child of it would be
+ * clipped the moment the selection ran near an edge.
+ */
+function showExplainPop(rect) {
+  explainPop.hidden = false;
+  const box = explainPop.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(8, rect.left + rect.width / 2 - box.width / 2),
+    window.innerWidth - box.width - 8,
+  );
+  // Below by default; above when the selection ends near the bottom of the window.
+  const below = rect.bottom + 8;
+  const top = below + box.height > window.innerHeight - 8 ? rect.top - box.height - 8 : below;
+  explainPop.style.left = `${Math.round(left)}px`;
+  explainPop.style.top = `${Math.round(Math.max(8, top))}px`;
+}
+
+// mouseup rather than selectionchange: the button should appear when you finish
+// selecting, not follow the cursor while you drag through the text.
+notesEl.addEventListener("mouseup", () => {
+  if (!player.active || state.settings.values["explain.enabled"] === false) return;
+  // A frame's grace — at mouseup the selection is not always settled yet.
+  setTimeout(() => {
+    const found = notesSelection();
+    if (!found) { hideExplainPop(); return; }
+    popSelection = found;
+    showExplainPop(found.rect);
+  }, 0);
+});
+
+explainPop.addEventListener("click", () => {
+  const found = popSelection;
+  hideExplainPop();
+  if (found) askExplain({ selection: found.text, at: found.at });
+});
+
+// Any of these mean the selection is no longer where the button is pointing.
+notesEl.addEventListener("scroll", hideExplainPop, { passive: true });
+document.addEventListener("selectionchange", () => {
+  // Not while the pointer is on the button: pressing it is itself what collapses
+  // the selection, and reacting to that would hide the button mid-click.
+  if (!explainPop.hidden && !explainPop.matches(":hover") && !notesSelection()) hideExplainPop();
+});
+
+// ── The dock's height ────────────────────────────────────────────────────────
+
+/** How little of the video pane the dock may leave the picture, in px. */
+const DOCK_FRAME_MIN = 140;
+const DOCK_MIN = 128;
+
+function clampDockHeight(px) {
+  const pane = document.getElementById("player-pane").getBoundingClientRect().height;
+  const max = Math.max(DOCK_MIN, pane - DOCK_FRAME_MIN);
+  return Math.round(Math.min(Math.max(px, DOCK_MIN), max));
+}
+
+/** `0` drops back to the CSS fallback, which is a share of the pane. */
+function applyDockHeight(px) {
+  if (px) explainDock.style.setProperty("--explain-height", `${clampDockHeight(px)}px`);
+  else explainDock.style.removeProperty("--explain-height");
+}
+
+const saveDockHeight = guard(async (px) => {
+  const result = await post("/api/settings", { values: { "explain.dockHeight": px } });
+  state.settings = result.settings;
+  renderSettings();
+});
+
+let dockDrag = null;
+
+explainSplitEl.addEventListener("pointerdown", (event) => {
+  dockDrag = { y: event.clientY, height: explainDock.getBoundingClientRect().height, moved: false };
+  explainSplitEl.setPointerCapture(event.pointerId);
+  document.getElementById("drawer-body").dataset.dragging = "rows";
+  event.preventDefault();
+});
+
+explainSplitEl.addEventListener("pointermove", (event) => {
+  if (!dockDrag) return;
+  const dy = event.clientY - dockDrag.y;
+  // Same guard as the vertical divider: a plain click must not persist a height.
+  if (!dockDrag.moved && Math.abs(dy) < 2) return;
+  dockDrag.moved = true;
+  // The divider sits above the dock, so dragging up grows it.
+  applyDockHeight(clampDockHeight(dockDrag.height - dy));
+});
+
+for (const event of ["pointerup", "pointercancel"]) {
+  explainSplitEl.addEventListener(event, () => {
+    if (!dockDrag) return;
+    const moved = dockDrag.moved;
+    dockDrag = null;
+    document.getElementById("drawer-body").dataset.dragging = "off";
+    if (moved) saveDockHeight(Math.round(explainDock.getBoundingClientRect().height));
+  });
+}
+
+explainSplitEl.addEventListener("dblclick", () => {
+  applyDockHeight(0);
+  saveDockHeight(0);
+});
+
+explainSplitEl.addEventListener("keydown", (event) => {
+  const step = event.key === "ArrowUp" ? 24 : event.key === "ArrowDown" ? -24 : 0;
+  if (step === 0) return;
+  event.preventDefault();
+  const next = clampDockHeight(explainDock.getBoundingClientRect().height + step);
+  applyDockHeight(next);
+  saveDockHeight(next);
+});
+
+/**
+ * Full screen for the panel, not for the video.
+ *
+ * The video element has its own fullscreen button and that one loses the notes,
+ * which is the opposite of what this view is for. This one takes the whole panel,
+ * so you lose the browser and the desktop and keep the two things you're using.
+ */
+const fullscreenBtn = document.getElementById("drawer-fullscreen");
+
+fullscreenBtn.addEventListener("click", () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+  document.querySelector(".drawer-panel").requestFullscreen().catch(() => {
+    toast("The browser wouldn't allow full screen here.", "bad");
+  });
+});
+
+// Driven by the event, not by the click: Escape and the browser's own controls
+// leave full screen too, and the label has to follow those as well.
+document.addEventListener("fullscreenchange", () => {
+  const on = Boolean(document.fullscreenElement);
+  fullscreenBtn.dataset.on = String(on);
+  fullscreenBtn.querySelector(".head-btn-label").textContent = on ? "Exit full screen" : "Full screen";
+  // The panes changed size, so a column sized to the old window may now be out
+  // of bounds — and after exiting, the notes should get their share back.
+  if (player.active) applyNotesWidth(clampNotesWidth(currentNotesWidth()));
+});
+
+document.getElementById("drawer-details").addEventListener("click", () => {
+  const drawer = document.getElementById("drawer");
+  const showing = drawer.dataset.details === "on";
+  drawer.dataset.details = showing ? "off" : "on";
+  document.getElementById("drawer-details").querySelector(".head-btn-label").textContent =
+    showing ? "Details" : "Hide details";
+});
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+
+/**
+ * Light/dark, remembered locally.
+ *
+ * A browser preference rather than a tool setting, so it lives in localStorage
+ * and never reaches settings.json: which theme suits the room you're in is not a
+ * fact about your notes pipeline. With nothing stored, the system preference
+ * applies — the stylesheet already handles that on its own.
+ */
+const THEME_KEY = "uninotes-theme";
+const themeToggle = document.getElementById("theme-toggle");
+
+function systemPrefersDark() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function isDark() {
+  const set = document.documentElement.dataset.theme;
+  return set ? set === "dark" : systemPrefersDark();
+}
+
+function refreshThemeToggle() {
+  themeToggle.title = isDark() ? "Switch to light mode" : "Switch to dark mode";
+}
+
+themeToggle.addEventListener("click", () => {
+  const next = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // Storage blocked. The theme still applies for this page.
+  }
+  refreshThemeToggle();
+});
+
+// Follows the system while nothing has been chosen, so the tooltip stays honest.
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", refreshThemeToggle);
+refreshThemeToggle();
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -768,9 +2139,17 @@ function currentValue(path) {
 }
 
 function setDraft(path, value) {
-  if (value === state.settings.values[path]) delete state.draft[path];
+  // Structural comparison for the term list — it's an array, so === would call
+  // an untouched list a change and leave the save bar showing forever.
+  const same = typeof value === "object" && value !== null
+    ? JSON.stringify(value) === JSON.stringify(state.settings.values[path])
+    : value === state.settings.values[path];
+
+  if (same) delete state.draft[path];
   else state.draft[path] = value;
+
   renderSettings();
+  schedulePreview();
 }
 
 function renderSettings() {
@@ -783,13 +2162,66 @@ function renderSettings() {
   }
 
   host.replaceChildren(...groups.map((group) => {
-    const section = el("section", { class: "set-group" });
-    section.append(el("h2", { text: group.name }));
+    // Collapsed until you open it. Eleven groups of settings is a wall to scroll
+    // past when you came here to change one thing, and the group names are the
+    // index — a group with an unsaved change opens itself, because a change you
+    // can't see is worse than a long page.
+    const dirtyHere = group.fields.some((f) => f.path in state.draft);
+    const open = state.settingsOpen.has(group.name) || dirtyHere;
+    const section = el("section", { class: `set-group${open ? " open" : ""}` });
+
+    const head = el("div", { class: "set-group-head" });
+    const toggle = el("button", { class: "set-group-toggle" });
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.innerHTML =
+      '<svg class="set-caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M6 4l4 4-4 4"/></svg>';
+    toggle.append(el("span", { text: group.name }));
+    toggle.addEventListener("click", () => {
+      if (state.settingsOpen.has(group.name)) state.settingsOpen.delete(group.name);
+      else state.settingsOpen.add(group.name);
+      renderSettings();
+    });
+    head.append(toggle);
+
+    // Reset lives on the group, not on each setting. Putting one group back is
+    // the thing you actually want when you've been experimenting, and it is a
+    // far smaller commitment than the page-wide reset at the bottom.
+    const reset = el("button", {
+      class: "link-btn",
+      text: "Reset",
+      title: `Put every setting under ${group.name} back to its default`,
+    });
+    reset.addEventListener("click", guard(async () => {
+      const result = await post("/api/settings/reset", { group: group.name });
+      // Drafts for this group would otherwise re-apply the values you just
+      // dropped the moment you saved.
+      for (const field of group.fields) delete state.draft[field.path];
+      state.settings = result.settings;
+      toast(result.message);
+      renderSettings();
+      schedulePreview();
+    }));
+    head.append(reset);
+    section.append(head);
+
+    if (!open) return section;
+
     const list = el("div", { class: "set-list" });
     group.fields.forEach((field) => list.append(renderSetting(field)));
     section.append(list);
+    // Attached to Naming rather than sitting at the end of the page: two
+    // free-text templates are only safe to offer beside the thing that shows
+    // what they do, and scrolling away to check defeats the point.
+    if (group.name === "Naming") section.append(renderPreview());
     return section;
   }));
+
+  // Here because this is the one place every settings load and save passes
+  // through, and the size has to reach a player that may already be open.
+  applyCueSize(state.settings.values["player.subtitleSize"]);
 
   const changed = Object.keys(state.draft);
   document.getElementById("settings-bar").hidden = changed.length === 0;
@@ -801,13 +2233,18 @@ function renderSetting(field) {
   // A setting whose feature is switched off is shown but not editable — leaving
   // it live invites you to configure something that isn't going to happen.
   const inactive = field.dependsOn !== undefined && currentValue(field.dependsOn) === false;
-  const wrap = el("div", { class: `set${inactive ? " set-off" : ""}` });
+  // The term list is a table of controls, not a value — it needs the label
+  // column's width as well as its own.
+  const wide = field.type === "terms" ? " set-wide" : "";
+  const wrap = el("div", { class: `set${inactive ? " set-off" : ""}${wide}` });
   const dirty = field.path in state.draft;
-  const overridden = state.settings.overridden.includes(field.path);
 
+  // "unsaved" only. A per-setting "changed from default" badge marked most of
+  // the page once anything was configured, which made it noise rather than
+  // information — and what you actually want from it, putting a group back, is
+  // now the Reset link on the group's own heading.
   const name = el("div", { class: "set-name", text: field.label });
   if (dirty) name.append(el("span", { class: "changed", text: "unsaved" }));
-  else if (overridden) name.append(el("span", { class: "overridden", text: "changed from default" }));
   wrap.append(name);
 
   const control = el("div", { class: "set-control" });
@@ -852,6 +2289,8 @@ function renderSetting(field) {
     if (field.path === "segmentSeconds") {
       control.append(el("span", { class: "set-help", text: `${Math.round(Number(value) / 60)} minutes` }));
     }
+  } else if (field.type === "terms") {
+    control.append(renderTermEditor(field, value));
   } else if (field.type === "prompt") {
     // Committed on blur, not per keystroke: setDraft re-renders the whole form,
     // which on a textarea would put the caret back at the end after every letter.
@@ -886,12 +2325,225 @@ function renderSetting(field) {
   return wrap;
 }
 
+// ── Terms ────────────────────────────────────────────────────────────────────
+
+const MS_DAY = 86400000;
+
+function addDays(iso, days) {
+  const date = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Date(date.getTime() + days * MS_DAY).toISOString().slice(0, 10);
+}
+
+/**
+ * A term to start editing from.
+ *
+ * Guesses the next one along rather than opening blank: a second semester
+ * usually starts around five months after the first and runs the same shape, so
+ * pre-filling turns "set up 2026 S1, then S2, then 2027 S1" into three clicks
+ * and three corrections instead of fifteen fields. Every value is editable —
+ * the guess only has to be closer than empty.
+ */
+function nextTerm(existing) {
+  const previous = existing[existing.length - 1];
+  if (!previous) {
+    const year = new Date().getFullYear();
+    return {
+      id: `term-${Date.now()}`,
+      label: `${year} Semester 1`,
+      folder: "",
+      start: `${year}-03-02`,
+      weeks: 12,
+      break: { afterWeek: 6, weeks: 2 },
+    };
+  }
+
+  const bumpedYear = /^(\d{4})/.exec(previous.label);
+  const isSecond = /2\b/.test(previous.label);
+  const label = bumpedYear
+    ? isSecond
+      ? `${Number(bumpedYear[1]) + 1} Semester 1`
+      : previous.label.replace(/1\b/, "2")
+    : `${previous.label} (copy)`;
+
+  return {
+    ...previous,
+    id: `term-${Date.now()}`,
+    label,
+    // The term you're adding is the one you're moving into, so the one before it
+    // becomes the archive — but only if it isn't already filed somewhere.
+    folder: "",
+    start: addDays(previous.start, isSecond ? 224 : 140),
+    break: previous.break ? { ...previous.break } : null,
+  };
+}
+
+function renderTermEditor(field, rawValue) {
+  const terms = Array.isArray(rawValue) ? rawValue : [];
+  const host = el("div", { class: "terms" });
+
+  const commit = (next) => setDraft(field.path, next);
+
+  const update = (index, patch) => {
+    const next = terms.map((t, i) => (i === index ? { ...t, ...patch } : t));
+    commit(next);
+  };
+
+  if (terms.length === 0) {
+    host.append(el("p", {
+      class: "terms-empty",
+      text: "No terms yet. Add one and lectures start sorting into weeks.",
+    }));
+  }
+
+  terms.forEach((term, index) => {
+    const row = el("div", { class: "term" });
+
+    const line = el("div", { class: "term-line" });
+    line.append(
+      termField("Name", "text", term.label, "2026 Semester 2", (v) => update(index, { label: v }), "term-name"),
+      termField("Folder", "text", term.folder, "blank for current", (v) => update(index, { folder: v }), "term-folder"),
+      termField("Week 1 starts", "date", term.start, "", (v) => update(index, { start: v }), "term-date"),
+      termField("Weeks", "number", term.weeks, "", (v) => update(index, { weeks: Number(v) || 1 }), "term-weeks"),
+    );
+
+    const remove = el("button", { class: "link-btn danger", text: "Remove" });
+    remove.addEventListener("click", () => commit(terms.filter((_, i) => i !== index)));
+    line.append(remove);
+    row.append(line);
+
+    // Second line, because a break is a qualifier on the term above rather than
+    // another field of equal weight — and most of the time it's left alone.
+    const breakLine = el("div", { class: "term-line term-break" });
+    const has = term.break !== null && term.break !== undefined;
+
+    const toggle = el("label", { class: "check" });
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = has;
+    box.addEventListener("change", () => {
+      update(index, { break: box.checked ? { afterWeek: Math.ceil((term.weeks || 12) / 2), weeks: 2 } : null });
+    });
+    toggle.append(box, document.createTextNode(" mid-term break"));
+    breakLine.append(toggle);
+
+    if (has) {
+      breakLine.append(
+        el("span", { class: "term-label", text: "after week" }),
+        termNumber(term.break.afterWeek, (v) => update(index, { break: { ...term.break, afterWeek: v } })),
+        el("span", { class: "term-label", text: "lasting" }),
+        termNumber(term.break.weeks, (v) => update(index, { break: { ...term.break, weeks: v } })),
+        el("span", { class: "term-label", text: "week(s)" }),
+      );
+    }
+    row.append(breakLine);
+
+    const problem = (state.termProblems ?? []).find((p) => p.termId === term.id);
+    if (problem) row.append(el("div", { class: "term-problem", text: problem.message }));
+
+    host.append(row);
+  });
+
+  const add = el("button", { class: "btn", text: "Add term" });
+  add.addEventListener("click", () => commit([...terms, nextTerm(terms)]));
+  host.append(add);
+
+  return host;
+}
+
+function termField(label, type, value, placeholder, onChange, className) {
+  const wrap = el("label", { class: `term-field ${className}` });
+  wrap.append(el("span", { class: "term-label", text: label }));
+  const input = el("input", { class: "field" });
+  input.type = type;
+  input.value = value ?? "";
+  if (placeholder) input.placeholder = placeholder;
+  if (type === "number") input.min = 1;
+  input.addEventListener("change", () => onChange(input.value));
+  wrap.append(input);
+  return wrap;
+}
+
+function termNumber(value, onChange) {
+  const input = el("input", { class: "field term-num" });
+  input.type = "number";
+  input.min = 1;
+  input.value = value ?? 1;
+  input.addEventListener("change", () => onChange(Number(input.value) || 1));
+  return input;
+}
+
+// ── Naming preview ───────────────────────────────────────────────────────────
+
+/**
+ * Ask the server where real lectures would land under the current form values.
+ *
+ * Server-side because the answer must come from the code that does the writing.
+ * Debounced: this fires on every keystroke in a template box, and the answer is
+ * only worth having once you've stopped typing.
+ */
+let previewTimer = null;
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => { refreshPreview(); }, 250);
+}
+
+const refreshPreview = guard(async () => {
+  const values = { ...state.settings.values, ...state.draft };
+  const data = await post("/api/naming/preview", { values });
+  state.preview = data.samples ?? [];
+  state.termProblems = data.problems ?? [];
+  // Redrawn rather than patched in place: the term rows need their validation
+  // messages from the same response, and they live elsewhere in the form.
+  renderSettings();
+});
+
+/** The "where would this go" panel, drawn from the last preview response. */
+function renderPreview() {
+  const host = el("div", { class: "preview" });
+  host.append(el("div", { class: "preview-caption", text: "Where these would go" }));
+
+  if (state.preview === null) {
+    host.append(el("p", { class: "console-idle", text: "Working it out…" }));
+    return host;
+  }
+  if (state.preview.length === 0) {
+    host.append(el("p", { class: "console-idle", text: "No lectures yet to preview against." }));
+    return host;
+  }
+
+  for (const sample of state.preview) {
+    const block = el("div", { class: "preview-item" });
+
+    block.append(el("div", { class: "preview-title", text: sample.title }));
+    block.append(el("div", {
+      class: sample.date ? "preview-meta" : "preview-meta none",
+      text: sample.date
+        ? `${sample.date} · from ${sample.dateSource}` +
+          (sample.week ? ` · ${sample.termLabel}, week ${sample.week}` : " · outside every term")
+        : "no date found — the week folder is left out",
+    }));
+
+    for (const entry of sample.paths) {
+      const line = el("div", { class: "preview-path" });
+      line.append(el("span", { class: "preview-root", text: `${entry.name}: ` }));
+      line.append(el("span", { text: entry.path }));
+      block.append(line);
+    }
+
+    host.append(block);
+  }
+
+  return host;
+}
+
 document.getElementById("settings-save").addEventListener("click", guard(async () => {
   const result = await post("/api/settings", { values: state.draft });
   state.settings = result.settings;
   state.draft = {};
   renderSettings();
   toast(result.message);
+  refreshPreview();
   await refreshStatus();
 }));
 
@@ -907,6 +2559,7 @@ document.getElementById("settings-reset").addEventListener("click", guard(async 
   state.draft = {};
   renderSettings();
   toast(result.message);
+  refreshPreview();
   await refreshStatus();
 }));
 
@@ -1138,6 +2791,14 @@ function inline(text) {
     // Links are rebuilt from escaped text, and only http(s) targets are allowed —
     // a javascript: URL would otherwise survive escaping intact.
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>')
+    // Ranges before single stamps: the single pattern wants the closing bracket
+    // straight after the time, so "[00:00 - 02:34]" would go untagged — and a
+    // range is exactly what the model reaches for to open a section, which is
+    // the block you most want to be able to jump to.
+    .replace(
+      /\[(\d{1,2}:[0-5]\d(?::[0-5]\d)?\s*[-–—]\s*\d{1,2}:[0-5]\d(?::[0-5]\d)?)\]/g,
+      '<span class="ts">[$1]</span>',
+    )
     .replace(/\[(\d{1,2}:[0-5]\d(?::[0-5]\d)?)\]/g, '<span class="ts">[$1]</span>');
 }
 
@@ -1211,6 +2872,7 @@ const boot = guard(async () => {
   renderSchedule();
   connectEvents();
   await refreshLibrary();
+  refreshPreview();
 
   // Counts change from outside the panel too — a scheduled run, a video dropped
   // into Incoming/ — so poll rather than only refreshing after our own actions.

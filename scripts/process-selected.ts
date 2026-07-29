@@ -184,7 +184,9 @@ if (prettyOnly) {
           // Local videos keep the process-local convention: parts in temp/, and
           // the source archived into the lecture folder rather than deleted.
           partsDir: row.source === "local" ? CONFIG.paths.temp : undefined,
-          onComplete: row.source === "local" ? "move" : "delete",
+          // A local video is archived beside its notes — it's your own file, not
+          // a copy of something on Panopto, so it is never swept.
+          onComplete: row.source === "local" ? "move" : CONFIG.player.keep ? "cache" : "delete",
         },
         providers,
       );

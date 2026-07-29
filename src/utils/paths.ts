@@ -10,6 +10,7 @@ export function ensureDirectories(): void {
     CONFIG.paths.browserData.panopto,
     CONFIG.paths.browserData.gemini,
     CONFIG.paths.incoming,
+    CONFIG.paths.videoCache,
   ];
 
   for (const dir of dirs) {

@@ -1,5 +1,10 @@
 /**
- * Export lecture notes into flat course-level folders.
+ * Copy lecture notes into Exports/.
+ *
+ * Exports/ only — the workspace copy is `scripts/sync-workspace.ts`, run
+ * separately. They were one loop until the two destinations grew different
+ * layouts, at which point "export" meaning two things made it impossible to
+ * redo one without redoing the other.
  *
  * Usage:
  *   npx tsx scripts/export-notes.ts          # export both raw + pretty
@@ -10,11 +15,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { syncToWorkspace } from "../src/utils/workspaceSync.js";
-
-const ROOT = path.resolve(import.meta.dirname!, "..");
-const LECTURES_DIR = path.join(ROOT, "Lectures");
-const EXPORTS_DIR = path.join(ROOT, "Exports");
+import { CONFIG } from "../config.js";
+import { listLectures } from "../src/gui/library.js";
+import { destinationFor } from "../src/notes/organise.js";
 
 const args = process.argv.slice(2);
 const exportRaw = args.length === 0 || args.includes("--raw");
@@ -59,38 +62,40 @@ function copyIfNeeded(src: string, dest: string): void {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
   copied++;
-  console.log(`COPIED: ${path.relative(ROOT, dest)}`);
+  console.log(`COPIED: ${path.relative(CONFIG.rootDir, dest)}`);
 }
 
-// Walk Lectures/<Course>/<LectureTitle>/
-for (const course of fs.readdirSync(LECTURES_DIR)) {
-  const courseDir = path.join(LECTURES_DIR, course);
-  if (!fs.statSync(courseDir).isDirectory()) continue;
+// The library rather than a directory walk: it already merges the database with
+// the disk, which is what gets a hand-corrected date onto a lecture whose folder
+// name still says otherwise.
+for (const entry of listLectures()) {
+  if (!entry.lectureDir) continue;
 
-  for (const lecture of fs.readdirSync(courseDir)) {
-    const lectureDir = path.join(courseDir, lecture);
-    if (!fs.statSync(lectureDir).isDirectory()) continue;
+  const destination = destinationFor(
+    {
+      title: entry.title,
+      courseCode: entry.courseCode,
+      resolvedDate: entry.lectureDate,
+      resolvedSource: entry.dateSource,
+    },
+    {
+      folderTemplate: CONFIG.exports.folderTemplate,
+      fileTemplate: CONFIG.exports.fileTemplate || CONFIG.naming.fileTemplate,
+    },
+    CONFIG.terms.list,
+    CONFIG.terms.enabled,
+  );
 
-    const destFilename = `${lecture}.md`;
+  // Resolved once above, then rooted twice — Raw and Pretty are the same tree
+  // with a different top, and deriving them separately invites them to drift.
+  const place = (kind: "Raw" | "Pretty") =>
+    path.join(CONFIG.paths.exports, kind, ...destination.segments, destination.filename);
 
-    if (exportRaw) {
-      const rawSrc = path.join(lectureDir, "lecture.raw.md");
-      const rawDest = path.join(EXPORTS_DIR, "Raw", course, destFilename);
-      copyIfNeeded(rawSrc, rawDest);
-    }
-
-    if (exportPretty) {
-      const prettySrc = path.join(lectureDir, "lecture.pretty.md");
-      const prettyDest = path.join(EXPORTS_DIR, "Pretty", course, destFilename);
-      copyIfNeeded(prettySrc, prettyDest);
-
-      // Also sync to University workspace (non-fatal)
-      try {
-        syncToWorkspace(course, prettySrc);
-      } catch (syncErr) {
-        console.warn(`[SYNC] Workspace sync failed for ${course}/${lecture}: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`);
-      }
-    }
+  if (exportRaw) {
+    copyIfNeeded(path.join(entry.lectureDir, "lecture.raw.md"), place("Raw"));
+  }
+  if (exportPretty) {
+    copyIfNeeded(path.join(entry.lectureDir, "lecture.pretty.md"), place("Pretty"));
   }
 }
 

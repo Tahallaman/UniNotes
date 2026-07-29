@@ -229,6 +229,37 @@ main { padding-bottom: 5rem; }
 }
 .icon-btn:hover { color: var(--ink); }
 
+/* A quiet icon+label button for chrome — headers, toolbars. Borderless until you
+   reach for it, so a row of them reads as one group rather than as several
+   competing controls, which is what underlined text links next to a big × did. */
+.head-btn {
+  appearance: none; cursor: pointer; font: inherit; font-size: var(--s0);
+  display: inline-flex; align-items: center; gap: .45rem;
+  padding: .5rem .8rem; border-radius: 7px;
+  border: 1px solid transparent; background: none; color: var(--muted);
+  transition: background-color .12s, color .12s, border-color .12s;
+}
+.head-btn:hover { color: var(--ink); background: var(--sunken); border-color: var(--line); }
+.head-btn:focus-visible { outline: 2px solid var(--ready); outline-offset: 1px; }
+.head-btn svg { width: 17px; height: 17px; flex: 0 0 auto; }
+#drawer-fullscreen .icon-collapse { display: none; }
+#drawer-fullscreen[data-on="true"] .icon-expand { display: none; }
+#drawer-fullscreen[data-on="true"] .icon-collapse { display: block; }
+/* Square, because it has no label to balance the horizontal padding against. */
+.head-btn-close { padding: .5rem; }
+.head-btn-close svg { width: 18px; height: 18px; }
+.head-btn-close:hover { color: var(--broken); border-color: var(--line); }
+
+/* Icon reflects the theme you're in; the tooltip says where clicking takes you. */
+.theme-toggle { margin-left: auto; align-self: center; }
+.theme-toggle .icon-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: none; }
+  :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: block; }
+}
+
 .check { display: inline-flex; align-items: center; gap: .4rem; color: var(--muted); font-size: var(--s-1); cursor: pointer; user-select: none; }
 .check input { accent-color: var(--ink); }
 
@@ -266,7 +297,8 @@ main { padding-bottom: 5rem; }
 .grid tbody tr:hover { background: var(--sunken); }
 .grid tbody tr.picked { background: var(--sunken); box-shadow: inset 2px 0 0 var(--ink); }
 .c-check { width: 2rem; }
-.c-course, .c-status, .c-files, .c-when { width: 1%; white-space: nowrap; }
+.c-course, .c-status, .c-files, .c-video, .c-week, .c-watched, .c-when { width: 1%; white-space: nowrap; }
+.c-watched { text-align: center; }
 .c-course, .c-when { font-family: var(--mono); font-size: var(--s-1); color: var(--muted); font-variant-numeric: tabular-nums; }
 .title-link {
   background: none; border: 0; padding: 0; font: inherit; text-align: left;
@@ -288,6 +320,33 @@ main { padding-bottom: 5rem; }
 .files .yes { color: var(--ready); }
 .files .no  { color: var(--faint); }
 
+/* Deliberately the same shape as the Notes cell beside it — one quiet word in
+   the same mono face — so the column reads as another fact about the lecture
+   rather than a button bolted onto every row. It underlines on hover, which is
+   what tells you it's the one you can press. */
+.video-link {
+  appearance: none; border: 0; padding: 0; background: none; cursor: pointer;
+  font-family: var(--mono); font-size: var(--s-1); letter-spacing: .02em;
+  color: var(--muted);
+}
+.video-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.video-link:focus-visible { outline: 2px solid var(--ready); outline-offset: 2px; border-radius: 3px; }
+/* There's a recording sitting there. Same green as a note that exists. */
+.video-link.ready { color: var(--ready); }
+.video-link.ready:hover { color: var(--ready); }
+.video-na { color: var(--faint); font-size: var(--s-1); cursor: help; }
+
+.watched-box { cursor: pointer; }
+/* Nothing to tick, so it reads as absent rather than as unticked. */
+.watched-na { color: var(--faint); font-size: var(--s-1); cursor: help; }
+
+.week { font-family: var(--mono); font-size: var(--s-1); cursor: help; }
+/* An unplaceable lecture is a prompt to fix something, not an error state. */
+.week.none { color: var(--faint); font-style: italic; }
+
+.date-edit { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.date-source { color: var(--muted); font-size: var(--s-1); }
+
 .selected-bar {
   position: sticky; bottom: 0; margin-top: 1rem;
   display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
@@ -297,22 +356,84 @@ main { padding-bottom: 5rem; }
 .selected-count { font-weight: 600; font-size: var(--s-1); }
 .selected-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 
+/* ── Terms ───────────────────────────────────────────────────────────────── */
+
+.terms { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
+.terms-empty { color: var(--faint); font-size: var(--s-1); margin: 0; }
+.term {
+  border: 1px solid var(--line); border-radius: 6px; padding: .7rem .8rem;
+  background: var(--sunken); width: 100%;
+}
+.term-line { display: flex; gap: .8rem; align-items: flex-end; flex-wrap: wrap; }
+/* The break qualifies the term above it, so it sits back rather than beside. */
+.term-break { margin-top: .5rem; align-items: center; gap: .5rem; }
+.term-field { display: flex; flex-direction: column; gap: .2rem; }
+.term-label { color: var(--muted); font-size: var(--s-1); }
+.term-name .field { width: 12rem; }
+.term-folder .field { width: 9rem; }
+.term-weeks .field { width: 5rem; }
+.term-num { width: 4rem; }
+.term-problem { color: var(--broken); font-size: var(--s-1); margin-top: .5rem; }
+
+/* ── Naming preview ──────────────────────────────────────────────────────── */
+
+.preview {
+  margin-top: 1rem; padding: .9rem 1rem;
+  border: 1px solid var(--line-firm); border-radius: 6px; background: var(--sunken);
+}
+.preview-caption {
+  font-size: var(--s-1); font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .09em; margin-bottom: .7rem;
+}
+.preview-item + .preview-item { margin-top: .9rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+.preview-title { font-size: var(--s-1); color: var(--muted); }
+.preview-meta { font-size: var(--s-1); color: var(--faint); margin-bottom: .35rem; }
+.preview-meta.none { color: var(--busy); }
+.preview-path {
+  font-family: var(--mono); font-size: var(--s-1);
+  overflow-x: auto; white-space: nowrap; padding-bottom: .1rem;
+}
+.preview-root { color: var(--muted); }
+
 /* ── Settings ────────────────────────────────────────────────────────────── */
 
 .set-group { margin-bottom: 2.5rem; }
-.set-group > h2 {
-  margin: 0 0 .5rem; font-size: var(--s-1); font-weight: 600;
+/* Reset sits on the heading row and stays quiet until you go looking for it —
+   it's a thing you want occasionally and never want to hit by accident. */
+.set-group-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; margin-bottom: .5rem;
+}
+/* The whole heading is the hit target, so opening a group doesn't ask you to
+   find a caret. */
+.set-group-toggle {
+  appearance: none; border: 0; background: none; cursor: pointer; padding: .2rem 0;
+  display: inline-flex; align-items: center; gap: .45rem;
+  font: inherit; font-size: var(--s-1); font-weight: 600;
   text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
 }
+.set-group-toggle:hover { color: var(--ink); }
+.set-group-toggle:focus-visible { outline: 2px solid var(--ready); outline-offset: 3px; border-radius: 3px; }
+.set-caret { width: 13px; height: 13px; transition: transform .15s ease; }
+.set-group.open .set-caret { transform: rotate(90deg); }
+/* Closed, there is nothing under the heading, so the gap below it is dead space. */
+.set-group:not(.open) { margin-bottom: 0; }
+.set-group:not(.open) .set-group-head { margin-bottom: 0; border-bottom: 1px solid var(--line); padding-bottom: .5rem; }
+.set-group-head .link-btn { color: var(--faint); font-size: var(--s-1); }
+.set-group-head .link-btn:hover { color: var(--broken); }
 .set-list { border-top: 1px solid var(--line); }
 .set {
   display: grid; grid-template-columns: 15rem 1fr; gap: .25rem 1.5rem;
   padding: .9rem .1rem; border-bottom: 1px solid var(--line); align-items: baseline;
 }
 .set.set-off { opacity: .45; }
+/* The term editor is a table of controls; the label column's width is worth
+   more to it than the alignment it gives up. */
+.set.set-wide { grid-template-columns: 1fr; }
+.set.set-wide .set-help { grid-column: 1; max-width: none; }
+.set.set-wide .set-control .field { min-width: 0; }
 .set-name { font-weight: 550; }
 .set-name .changed { color: var(--busy); margin-left: .35rem; }
-.set-name .overridden { color: var(--faint); margin-left: .35rem; }
 .set-control { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
 .set-control .field { min-width: 15rem; }
 .set-control input[type="range"] { flex: 1 1 12rem; max-width: 18rem; accent-color: var(--ink); }
@@ -364,14 +485,303 @@ main { padding-bottom: 5rem; }
   background: var(--paper); border-left: 1px solid var(--line-firm);
   display: flex; flex-direction: column;
 }
-.drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.3rem 1.6rem 1rem; border-bottom: 1px solid var(--line); }
+/* With a video, the drawer stops being a drawer: watching a lecture is the whole
+   task, not a peek at a row, so it takes the window. Without one, reading notes
+   is better in a narrow column and the slide-over stays as it was. */
+.drawer-panel:has(.drawer-body[data-player="on"]) {
+  inset: 0; width: auto; border-left: 0;
+}
+/* Watching is the whole task, so the window goes to the video and the notes: the
+   header shrinks to a title bar and the facts are behind Details rather than a
+   permanent band across the top. Three pairs per row when they are shown. */
+.drawer-panel:has(.drawer-body[data-player="on"]) .drawer-head { padding: .38rem .9rem .38rem 1.2rem; }
+.drawer-panel:has(.drawer-body[data-player="on"]) .drawer-head h2 { font-size: var(--s0); }
+.drawer-panel:has(.drawer-body[data-player="on"]) .facts {
+  grid-template-columns: repeat(3, auto minmax(0, 1fr));
+  max-height: 40vh; overflow-y: auto;
+  padding-block: .8rem;
+}
+#drawer[data-details="off"] .drawer-panel:has(.drawer-body[data-player="on"]) .facts { display: none; }
+
+/* Centred against the whole header rather than pinned to its top: the title
+   block beside them wraps to two lines, so flex-start left the buttons riding
+   high above their own row. The title itself stays top-aligned, which is what a
+   wrapping heading wants. */
+.drawer-head-actions { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; align-self: center; }
+
+/* Full screen takes the panel, not the video: the point is to lose the browser
+   and the desktop, not the notes. Chrome paints the fullscreen element's
+   backdrop black, so the panel has to state its own background. */
+.drawer-panel:fullscreen { width: 100%; height: 100%; background: var(--paper); }
+/* Centred, not top-aligned: the buttons opposite are centred against the header,
+   and a one-line title riding above them read as misaligned. A title that wraps
+   to two lines still centres as a block, which is what you want when the thing
+   it is balanced against is a row of controls. */
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.3rem 1.6rem 1rem; border-bottom: 1px solid var(--line); }
 .drawer-head h2 { margin: 0; font-size: var(--s1); letter-spacing: -.01em; }
-.drawer-sub { margin: .15rem 0 0; color: var(--muted); font-size: var(--s-1); }
 .facts { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1.2rem; margin: 0; padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--line); font-size: var(--s-1); }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; word-break: break-word; }
 .facts a { color: var(--ink); }
 .fact-actions { grid-column: 1 / -1; display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
+.drawer-body { flex: 1; min-height: 0; display: flex; }
+.drawer-body > * { min-width: 0; }
+.notes-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ── Player ──────────────────────────────────────────────────────────────── */
+
+.player-pane { display: flex; flex-direction: column; background: var(--sunken); }
+.drawer-body[data-player="off"] .player-pane,
+.drawer-body[data-player="off"] .pane-split { display: none; }
+
+/* The split. By default the notes take exactly the width their own text wants —
+   the reading measure, its padding, and room for a scrollbar — and the video
+   takes everything left over. A proportional split leaves the notes sprawling
+   across empty margins beside a needlessly small picture on a wide screen, which
+   is what a share-of-the-window default did. Dragging the divider sets
+   --notes-width, which overrides the fit. */
+.drawer-body[data-player="on"] {
+  /* The width the notes want: a readable line plus its padding and room for a
+     scrollbar. The default, and what double-clicking the divider gives back —
+     not a floor, since dragging them narrow is a decision to watch instead. */
+  --notes-measure: 68ch;
+  --notes-fit: calc(var(--notes-measure) + 4.1rem);
+}
+/* Width rather than flex-basis, because a percentage basis resolves against the
+   flex container's *available* main size while that is still being negotiated
+   with the video pane. The wider default — a share of the window — is worked out
+   in JS instead: a percentage here resolves circularly against the pane's own
+   width and silently collapses to the fit. --notes-fit is the fallback only for
+   the moment before setupPlayer has measured anything. */
+.drawer-body[data-player="on"] .notes-pane {
+  flex: 0 0 auto;
+  width: var(--notes-width, var(--notes-fit));
+  order: 3;
+}
+.drawer-body[data-player="on"] .player-pane { flex: 1 1 0; min-width: 12rem; order: 1; }
+/* No line-length cap in the player: the column is yours to size, and a cap would
+   mean widening it only ever bought you margins. The text takes the width you
+   gave it, less the ordinary padding. */
+.drawer-body[data-player="on"] .notes :is(p, ul, ol) { max-width: none; }
+
+.pane-split {
+  order: 2; flex: 0 0 auto; width: 7px; padding: 0; border: 0;
+  background: var(--line); cursor: col-resize;
+}
+.pane-split:hover, .pane-split:focus-visible { background: var(--ready); outline: none; }
+/* Notes on the left just reverses the row; the divider stays between the two. */
+.drawer-body[data-side="left"] .notes-pane { order: 1; }
+.drawer-body[data-side="left"] .player-pane { order: 3; }
+/* The divider captures the pointer while dragging, but killing selection and the
+   video's own controls stops a drag from reading as a click on them. */
+.drawer-body[data-dragging="on"] { user-select: none; }
+.drawer-body[data-dragging="on"] .player-frame { pointer-events: none; }
+
+/* The frame takes the whole column and letterboxes inside it, so the video is
+   centred against black rather than sitting on top of a slab of empty panel. */
+.player-frame { flex: 1; min-height: 0; background: #000; }
+.player-frame video { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.player-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .55rem .8rem; border-top: 1px solid var(--line);
+  font-size: var(--s-1); background: var(--paper);
+}
+/* One segmented control, not three loose pills: these three all answer "how do
+   the notes behave", so they read better as a single cluster. */
+.player-bar-actions {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--line-firm); border-radius: 7px;
+  background: var(--raised); overflow: hidden;
+}
+.chip-btn {
+  appearance: none; cursor: pointer; font: inherit; font-size: var(--s-1);
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .34rem .7rem; border: 0; border-right: 1px solid var(--line);
+  background: none; color: var(--muted);
+  transition: background-color .12s, color .12s;
+}
+.chip-btn:last-child { border-right: 0; }
+/* Icon only — no label to pad around. */
+.chip-btn-tight { padding-inline: .5rem; }
+.chip-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.chip-btn:hover:not(:disabled) { color: var(--ink); background: var(--sunken); }
+.chip-btn:focus-visible { outline: 2px solid var(--ready); outline-offset: -2px; }
+/* Pressed is a wash, not just a border tint — inside a segmented control the
+   filled cell is what reads as "this one is on" at a glance. */
+.chip-btn[aria-pressed="true"] { color: var(--ready); background: var(--ready-wash); }
+/* Following is a setting of the sync, so it goes quiet when the sync is off
+   rather than sitting there as a control that would do nothing. */
+.chip-btn:disabled { opacity: .35; cursor: default; }
+.player-clock { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── Explain ─────────────────────────────────────────────────────────────── */
+
+/* The dock takes height from the video, never from the notes: the notes column
+   is the one already negotiating for width, and squeezing a video letterboxes
+   gracefully where squeezing a paragraph does not. */
+.explain-dock {
+  flex: 0 0 auto; height: var(--explain-height, 34%); min-height: 8rem;
+  display: flex; flex-direction: column; min-width: 0;
+  background: var(--paper); border-top: 1px solid var(--line);
+}
+/* A class that sets `display` outranks the UA's `[hidden] { display: none }`, so
+   every one of these has to say it again or the attribute does nothing. */
+.explain-dock[hidden], .explain-split[hidden], .explain-pop[hidden] { display: none; }
+.explain-split {
+  flex: 0 0 auto; height: 7px; padding: 0; border: 0;
+  background: var(--line); cursor: row-resize;
+}
+.explain-split:hover, .explain-split:focus-visible { background: var(--ready); outline: none; }
+.drawer-body[data-dragging="rows"] { user-select: none; cursor: row-resize; }
+.drawer-body[data-dragging="rows"] .player-frame { pointer-events: none; }
+
+.explain-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .45rem .5rem .45rem .9rem;
+}
+.explain-head h3 {
+  margin: 0; font-size: var(--s-1); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+}
+.explain-head-actions { display: flex; align-items: center; gap: .5rem; }
+
+.explain-log { flex: 1; min-height: 0; overflow: auto; padding: 0 .9rem .6rem; }
+.explain-turn { margin: 0 0 .8rem; font-size: var(--s-1); }
+/* The question is stated back quietly. You know what you asked; it's there so a
+   scrolled-back conversation still reads as one. */
+.explain-turn.you {
+  color: var(--muted); border-left: 2px solid var(--line-firm);
+  padding-left: .7rem; white-space: pre-wrap;
+}
+.explain-turn.them :is(p, ul, ol) { margin: 0 0 .6rem; max-width: none; }
+.explain-turn.them :is(h1, h2, h3, h4) { font-size: var(--s0); margin: .9rem 0 .4rem; }
+.explain-turn.them :is(h1, h2, h3, h4):first-child { margin-top: 0; }
+.explain-turn.them li { margin-bottom: .15rem; }
+.explain-turn.them code { font-family: var(--mono); font-size: .92em; }
+.explain-turn.them pre {
+  background: var(--sunken); padding: .7rem; border-radius: 5px; overflow: auto;
+  font-family: var(--mono); font-size: var(--s-1);
+}
+.explain-turn.them .ts { font-family: var(--mono); color: var(--ready); }
+.explain-turn.bad { color: var(--broken); }
+.explain-idle { color: var(--muted); font-size: var(--s-1); font-style: italic; margin: 0; }
+/* What it saw, at the foot of an answer. Not decoration: this sends your notes
+   to Google, so the panel says what it sent rather than leaving you to guess. */
+.explain-sent { color: var(--muted); font-size: .72rem; margin: -.4rem 0 .9rem; }
+
+.explain-ask { display: flex; gap: .5rem; padding: .5rem .9rem .7rem; border-top: 1px solid var(--line); }
+.explain-ask .field { flex: 1; min-width: 0; }
+
+/* Follows the selection. Fixed rather than absolute so it isn't clipped by the
+   notes column's own scroll box, which is where every selection happens. */
+.explain-pop {
+  position: fixed; z-index: 70; appearance: none; cursor: pointer; font: inherit;
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .32rem .6rem; font-size: var(--s-1);
+  border: 1px solid var(--line-firm); border-radius: 7px;
+  background: var(--raised); color: var(--ink);
+  box-shadow: 0 3px 14px rgb(0 0 0 / .22);
+}
+.explain-pop svg { width: 13px; height: 13px; }
+.explain-pop:hover { border-color: var(--ready); color: var(--ready); }
+
+.icon-btn {
+  appearance: none; cursor: pointer; display: inline-flex; padding: .25rem;
+  border: 0; border-radius: 5px; background: none; color: var(--muted);
+}
+.icon-btn svg { width: 14px; height: 14px; }
+.icon-btn:hover { color: var(--ink); background: var(--sunken); }
+
+/* ── Notes synced to the video ───────────────────────────────────────────── */
+
+/* Every block that carries a time is clickable, but stays visually quiet: the
+   whole document is clickable, so decorating each one would be noise. */
+.notes[data-synced] [data-t] { cursor: pointer; }
+.notes[data-synced] [data-t]:hover:not(.now) { background: var(--sunken); border-radius: 3px; }
+
+/* Transcript. Looser line height than the notes: it's continuous speech with no
+   headings to break it up, so the reading rhythm has to come from the leading. */
+.transcript-note {
+  color: var(--muted); font-size: var(--s-1); font-style: italic;
+  margin: 0 0 1.2rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line);
+}
+.transcript p { line-height: 1.72; margin-bottom: .55rem; }
+.transcript .ts { margin-right: .3rem; }
+
+/* Subtitles. Chrome's default is a black box in a system font at a size meant
+   for a phone held at arm's length — on a half-window player it swallows the
+   bottom third of the slide.
+
+   The size is deliberately not here: it's a setting, written into a stylesheet of
+   its own by applyCueSize() in app.js. ::cue lives in the video's shadow tree and
+   custom properties do not reliably reach it, so a var() here would have been a
+   rule that silently did nothing in some browsers. */
+video::cue {
+  background: rgb(0 0 0 / .74);
+  color: #fff;
+  font-family: var(--sans);
+  line-height: 1.35;
+}
+
+/* Scrollbars. Left to the browser these are a white slab in a dark panel, which
+   is the one piece of chrome that never got the theme. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-firm) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-firm); border-radius: 6px;
+  /* A transparent border inset by the track colour: a bare thumb touching both
+     edges reads as a slab, this reads as a bar. */
+  border: 2px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* Square on purpose: each block bleeds its own fill to meet its neighbours, and
+   a rounded corner on every one of them notches the edge of the joined region. */
+/* The shading fades rather than switching. A hard cut on every timestamp reads as
+   a flicker in the corner of your eye while you're reading something else; over
+   a third of a second the old passage releases as the new one takes, which is
+   slow enough to see as movement and quick enough not to lag the speech. Table
+   rows can't take the box-shadow, so their cells fade on their own. */
+.notes[data-synced] :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, pre)[data-t] {
+  transition: background-color .32s ease, box-shadow .32s ease;
+}
+.notes[data-synced] tr[data-t] :is(td, th) { transition: background-color .32s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .notes[data-synced] [data-t],
+  .notes[data-synced] tr[data-t] :is(td, th) { transition: none; }
+}
+/* A filled region, not a margin rule. The blocks of a group are separate elements
+   with margins between them, so each one bleeds its own fill outwards by half a
+   gap — the washes meet and the whole passage reads as one shaded area rather
+   than a stack of separately tinted paragraphs. */
+/* The spread has to exceed the largest gap it must close — an h2's 1.4rem top
+   margin plus the preceding item's bottom margin — or the fill comes out striped
+   wherever the passage crosses a heading. */
+.notes[data-synced] [data-t].now {
+  background: var(--ready-wash);
+  box-shadow: 0 0 0 .85rem var(--ready-wash);
+}
+/* A table row can't take a box-shadow that spans its cells, so it fills them. */
+.notes[data-synced] tr[data-t].now :is(td, th) { background: var(--ready-wash); }
+
+/* Below this the two columns are both too narrow to be worth having, so the
+   video goes on top and the notes scroll underneath it. */
+@media (max-width: 60rem) {
+  .drawer-body[data-player="on"] { flex-direction: column; }
+  .drawer-body[data-player="on"] .player-pane {
+    flex: 0 0 auto; order: 1; border-bottom: 1px solid var(--line);
+  }
+  /* Fills the rest, and ignores any dragged width — that was a decision about a
+     side-by-side split, and there isn't one here. */
+  .drawer-body[data-player="on"] .notes-pane { flex: 1 1 auto; order: 2; }
+  /* Nothing left to drag: the panes are stacked, not split. */
+  .pane-split { display: none; }
+  /* Stacked, the frame has no column to fill, so it needs a height of its own. */
+  .player-frame { flex: 0 0 auto; height: 34vh; }
+}
+
 .drawer-nav { display: flex; gap: 1.2rem; padding: .9rem 1.6rem 0; }
 .drawer-tab {
   appearance: none; border: 0; background: none; padding: 0 0 .55rem; cursor: pointer;

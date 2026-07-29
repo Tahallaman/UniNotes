@@ -80,6 +80,44 @@ export function resetForRetry(ids: string[]): { reset: number; skipped: string[]
 }
 
 /**
+ * Tick or untick "watched" for lectures.
+ *
+ * Deliberately leaves updated_at alone. It is a note about you, not about the
+ * lecture's progress through the pipeline, and the library is sorted by
+ * updated_at — bumping it would throw a lecture to the top of the list every time
+ * you ticked a box.
+ */
+export function setWatched(ids: string[], watched: boolean): number {
+  if (ids.length === 0) return 0;
+  return withWriteDb((db) => {
+    const placeholders = ids.map(() => "?").join(",");
+    return db
+      .prepare(`UPDATE lectures SET watched = ? WHERE id IN (${placeholders})`)
+      .run(watched ? 1 : 0, ...ids).changes;
+  });
+}
+
+/**
+ * Correct a lecture's date by hand, or clear the correction.
+ *
+ * The one manual input in an otherwise derived chain: everything about which
+ * term and week a lecture belongs to follows from its date, so this is the only
+ * lever needed when Panopto's record or a title's date is wrong. Passing null
+ * removes the override and lets resolution fall back to what it can work out.
+ */
+export function setLectureDate(id: string, date: string | null): void {
+  if (date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(`"${date}" isn't a date — use YYYY-MM-DD.`);
+  }
+  withWriteDb((db) => {
+    const changed = db
+      .prepare(`UPDATE lectures SET date_override = ? WHERE id = ?`)
+      .run(date, id).changes;
+    if (changed === 0) throw new Error("That lecture isn't tracked in the database.");
+  });
+}
+
+/**
  * Forget a lecture entirely so it can be re-scraped and reprocessed from scratch.
  * Note files on disk are left alone — this removes the tracking row, not your notes.
  */

@@ -42,7 +42,11 @@
     "test:attach": "tsx scripts/test-attachment-detect.ts",
     "test:timestamps": "tsx scripts/test-timestamps.ts",
     "test:blank": "tsx scripts/test-blank-detect.ts",
-    "test": "npm run typecheck && npm run test:attach && npm run test:timestamps && npm run test:blank"
+    "test:weeks": "tsx scripts/test-weeks.ts",
+    "test:explain": "tsx scripts/test-explain.ts",
+    "sync": "tsx scripts/sync-workspace.ts",
+    "probe:panopto-view": "tsx scripts/probe-panopto-view.ts",
+    "test": "npm run typecheck && npm run test:attach && npm run test:timestamps && npm run test:blank && npm run test:weeks && npm run test:explain"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

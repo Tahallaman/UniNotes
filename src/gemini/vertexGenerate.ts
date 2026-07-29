@@ -11,7 +11,7 @@
  * looks identical to a transient failure and burns the entire retry budget.
  */
 
-import { ThinkingLevel, type Part, type ThinkingConfig } from "@google/genai";
+import { ThinkingLevel, type Content, type Part, type ThinkingConfig } from "@google/genai";
 import { getClient } from "./vertexClient.js";
 import { log, type LogContext } from "../utils/logger.js";
 
@@ -49,7 +49,39 @@ export interface GenerateOptions {
 }
 
 export async function generateText(opts: GenerateOptions): Promise<string> {
-  const { model, parts, maxOutputTokens, thinkingLevel, thinkingBudget, ctx } = opts;
+  return generateChat({
+    ...opts,
+    contents: [{ role: "user", parts: opts.parts }],
+  });
+}
+
+export interface ChatOptions extends Omit<GenerateOptions, "parts"> {
+  /** The conversation so far, ending with the turn to answer. */
+  contents: Content[];
+  /**
+   * Standing instructions, outside the conversation.
+   *
+   * Where the lecture material goes for "Explain this": rebuilt on every turn
+   * from wherever the video has got to, so a follow-up asked after scrubbing
+   * elsewhere is answered about where you are now — while the conversation
+   * itself stays a plain sequence of questions and answers.
+   */
+  systemInstruction?: string;
+  /** Overrides the pipeline's half-hour ceiling, which is a lifetime for a chat. */
+  timeoutMs?: number;
+}
+
+/**
+ * A multi-turn call. `generateText` is this with one turn and no history.
+ *
+ * The timeout is the SDK's own rather than an AbortController wrapped around it:
+ * an abort on our side would leave the request running at the far end and still
+ * be billed, whereas httpOptions.timeout is the client giving up on a connection
+ * it owns. Nothing here can be cancelled by the user, so this is the only thing
+ * standing between a hung call and a socket held until the panel restarts.
+ */
+export async function generateChat(opts: ChatOptions): Promise<string> {
+  const { model, contents, maxOutputTokens, thinkingLevel, thinkingBudget, systemInstruction, timeoutMs, ctx } = opts;
 
   const thinkingConfig: ThinkingConfig | undefined =
     thinkingBudget !== undefined
@@ -60,11 +92,12 @@ export async function generateText(opts: GenerateOptions): Promise<string> {
 
   const response = await getClient().models.generateContent({
     model,
-    contents: [{ role: "user", parts }],
+    contents,
     config: {
       maxOutputTokens,
       ...(thinkingConfig ? { thinkingConfig } : {}),
-      httpOptions: { timeout: GENERATE_TIMEOUT_MS },
+      ...(systemInstruction ? { systemInstruction } : {}),
+      httpOptions: { timeout: timeoutMs ?? GENERATE_TIMEOUT_MS },
     },
   });
 
@@ -72,11 +105,14 @@ export async function generateText(opts: GenerateOptions): Promise<string> {
   const usage = response.usageMetadata;
   const thoughts = (usage as { thoughtsTokenCount?: number } | undefined)?.thoughtsTokenCount;
 
-  if (thoughts !== undefined && ctx) {
-    log.debug(
-      `tokens: prompt=${usage?.promptTokenCount} thinking=${thoughts} output=${usage?.candidatesTokenCount}`,
-      ctx,
-    );
+  // Logged with or without a lecture context. The prompt count is the only
+  // honest answer to "what did that question actually cost?" — for a chat it
+  // grows with the conversation, and arithmetic over character counts is a guess.
+  if (usage) {
+    const line =
+      `tokens: prompt=${usage.promptTokenCount} thinking=${thoughts ?? 0} output=${usage.candidatesTokenCount}`;
+    if (ctx) log.debug(line, ctx);
+    else log.debug(line);
   }
 
   const text = (response.text ?? "").trim();
@@ -85,7 +121,7 @@ export async function generateText(opts: GenerateOptions): Promise<string> {
     throw new TruncatedResponseError(
       `Response hit maxOutputTokens (${maxOutputTokens}); ` +
         `thinking used ${thoughts ?? "?"} tokens, output got ${usage?.candidatesTokenCount ?? 0}. ` +
-        `Raise CONFIG.vertex.generation.*.maxOutputTokens or lower the thinking budget.`,
+        `Raise the caller's maxOutputTokens or lower the thinking budget.`,
     );
   }
 

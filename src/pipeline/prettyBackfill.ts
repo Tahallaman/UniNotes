@@ -91,7 +91,9 @@ export async function backfillPretty(opts: {
       writePrettyNotes(entry.lectureDir, pretty);
 
       try {
-        syncToWorkspace(entry.courseCode, entry.prettyPath);
+        if (CONFIG.workspace.syncOnWrite) {
+          syncToWorkspace(entry.courseCode, entry.prettyPath);
+        }
       } catch (syncErr) {
         log.warn(
           `Workspace sync failed for ${entry.label}: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`,

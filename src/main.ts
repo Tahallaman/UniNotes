@@ -120,7 +120,10 @@ async function main(): Promise<void> {
             courseCode: lecture.course_code,
             videoPath: lecture.temp_file!,
             panoptoUrl: lecture.panopto_url,
-            onComplete: "delete",
+            // Deleted unless you've asked to keep it — see config.player.keep.
+            // "cache", not "move": it goes to the video cache so the player can
+            // use it this session, and is swept when UniNotes next starts.
+            onComplete: CONFIG.player.keep ? "cache" : "delete",
           },
           providers,
         ),

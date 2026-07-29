@@ -25,6 +25,12 @@ export interface LectureRow {
   notes_file: string | null;
   gemini_chat_url: string | null;
   error_message: string | null;
+  /** 0 or 1 — SQLite has no boolean. Marked by hand in the Library. */
+  watched: number;
+  /** When Panopto says the lecture was recorded. Null for local videos. */
+  recorded_at: string | null;
+  /** A date corrected by hand; outranks every other source. */
+  date_override: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -35,6 +41,8 @@ export interface NewLecture {
   courseCode: string;
   panoptoUrl: string;
   downloadUrl: string;
+  /** Panopto's own recording date. Optional: older scrapes didn't capture one. */
+  recordedAt?: string | null;
 }
 
 const NOW = "datetime('now')";
@@ -42,8 +50,8 @@ const NOW = "datetime('now')";
 export function insertLecture(lecture: NewLecture): boolean {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT OR IGNORE INTO lectures (id, title, course_code, panopto_url, download_url)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO lectures (id, title, course_code, panopto_url, download_url, recorded_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     lecture.id,
@@ -51,6 +59,7 @@ export function insertLecture(lecture: NewLecture): boolean {
     lecture.courseCode,
     lecture.panoptoUrl,
     lecture.downloadUrl,
+    lecture.recordedAt ?? null,
   );
   if (result.changes > 0) {
     log.info(`Inserted new lecture: ${lecture.title} [${lecture.courseCode}]`);
@@ -190,6 +199,24 @@ export function resetErroredPanoptoLectures(): void {
   if (toDownload + toProcess > 0) {
     log.info(`Retry: reset ${toDownload} lecture(s) to 'new', ${toProcess} to 'downloaded'`);
   }
+}
+
+/**
+ * Fill in a recording date for a lecture that was scraped before dates were
+ * read, without disturbing one that already has it.
+ *
+ * A date is a fact about the recording, so learning it late is worth keeping —
+ * the alternative is that every lecture already in the database is stuck with
+ * whatever its title implies, forever. `IS NULL` rather than a blanket update:
+ * this runs on every scan, and it must never overwrite a date you corrected by
+ * hand or one read from a listing that has since changed.
+ */
+export function backfillRecordedAt(id: string, recordedAt: string): boolean {
+  const db = getDb();
+  const result = db
+    .prepare(`UPDATE lectures SET recorded_at = ? WHERE id = ? AND recorded_at IS NULL`)
+    .run(recordedAt, id);
+  return result.changes > 0;
 }
 
 export function lectureExists(id: string): boolean {

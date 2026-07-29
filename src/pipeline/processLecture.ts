@@ -19,6 +19,7 @@ import { log, type LogContext } from "../utils/logger.js";
 import { splitVideoIfNeeded } from "../utils/videoSplitter.js";
 import { syncToWorkspace } from "../utils/workspaceSync.js";
 import { writeNotes, writePrettyNotes, moveLectureVideo } from "../notes/writer.js";
+import { cacheVideo } from "../utils/videoCache.js";
 import { prettifyNotes } from "../notes/prettifier.js";
 import { appendTodoItems } from "../todo/manager.js";
 import { updateStatus } from "../db/tracker.js";
@@ -45,8 +46,12 @@ export interface LectureJob {
    * What to do with the source video once notes exist:
    *   "delete" — Panopto downloads live in temp/ and are disposable
    *   "move"   — Incoming/ videos are archived into the lecture folder
+   *   "cache"  — kept for the player, in the cache UniNotes empties on start
+   *              and shutdown. Not the lecture folder: it's a copy of something
+   *              that lives on Panopto, and filing it with the notes is what
+   *              would make it look permanent enough to leave lying around.
    */
-  onComplete: "delete" | "move";
+  onComplete: "delete" | "move" | "cache";
 }
 
 export type LectureResult =
@@ -94,7 +99,9 @@ export async function processLecture(
       log.warn(`Skipping — this recording is blank: ${reason}`, ctx);
       updateStatus(job.id, "blank", { error_message: reason });
       cleanupParts(videoParts, job.videoPath);
-      if (job.onComplete === "delete") deleteFile(job.videoPath, ctx);
+      // Blank either way: there are no notes to watch it against, so caching it
+      // for the player would only fill the cache with nothing worth playing.
+      if (job.onComplete !== "move") deleteFile(job.videoPath, ctx);
       clearCheckpoint(job.id);
       return { blank: true, reason };
     }
@@ -129,6 +136,12 @@ export async function processLecture(
 
     if (job.onComplete === "move") {
       moveLectureVideo(job.videoPath, lectureDir);
+    } else if (job.onComplete === "cache") {
+      const cached = cacheVideo(job.videoPath, job.id);
+      if (cached) log.info(`Video kept for the player: ${cached}`, ctx);
+      // Caching moves the file; if it couldn't, the video is still in temp/ and
+      // deleting it here is what the "delete" default would have done anyway.
+      else deleteFile(job.videoPath, ctx);
     } else {
       deleteFile(job.videoPath, ctx);
     }
@@ -165,7 +178,9 @@ async function generatePretty(
     writePrettyNotes(lectureDir, prettyMarkdown);
 
     try {
-      syncToWorkspace(courseCode, path.join(lectureDir, "lecture.pretty.md"));
+      if (CONFIG.workspace.syncOnWrite) {
+        syncToWorkspace(courseCode, path.join(lectureDir, "lecture.pretty.md"));
+      }
     } catch (syncErr) {
       log.warn(
         `Workspace sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`,
