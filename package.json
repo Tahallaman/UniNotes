@@ -42,7 +42,8 @@
     "test:attach": "tsx scripts/test-attachment-detect.ts",
     "test:timestamps": "tsx scripts/test-timestamps.ts",
     "test:blank": "tsx scripts/test-blank-detect.ts",
-    "test": "npm run typecheck && npm run test:attach && npm run test:timestamps && npm run test:blank"
+    "test:export-names": "tsx scripts/test-export-names.ts",
+    "test": "npm run typecheck && npm run test:attach && npm run test:timestamps && npm run test:blank && npm run test:export-names"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

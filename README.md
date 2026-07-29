@@ -361,9 +361,32 @@ npm run export -- --pretty  # pretty only
 
 ```
 Exports/
-  Raw/<CourseCode>/<LectureTitle>.md
-  Pretty/<CourseCode>/<LectureTitle>.md
+  Raw/<CourseCode>/Lecture 01 - <CourseCode> - <title>.md
+  Pretty/<CourseCode>/Lecture 01 - <CourseCode> - <title>.md
 ```
+
+Exported notes lead with the lecture number so a folder of them sorts into
+lecture order — in Obsidian, in Explorer, anywhere the list is alphabetical.
+Panopto titles put the number wherever the department felt like it, or leave it
+out entirely, so the number is read out of the title where it states one and
+taken from the order the lectures were delivered where it doesn't:
+
+```
+ENGGEN 403 [21 July] Lecture 1 What can ENGGEN 403 do for me
+  → Lecture 01 - ENGGEN 403 - [21 July] What can ENGGEN 403 do for me.md
+
+[423-348] SOFTENG 761 L01CSOFTENG 761 L02C - Mon 20 Jul 0200 PM (NZT)
+  → Lecture 01 - SOFTENG 761 - Mon 20 Jul 0200 PM (NZT).md
+
+SOFTENG 753 - Tue 21 Jul - Introduction & What is Deep Learning   (no number)
+  → Lecture 01 - SOFTENG 753 - Tue 21 Jul - Introduction & What is Deep Learning.md
+```
+
+The same name is used for the second copy (see **Configuration → Second copy**),
+and notes already exported under the old name are renamed in place rather than
+duplicated. `Lectures/` keeps the recording's own title either way — that title
+is how a lecture is recognised as already processed. Turn the whole thing off
+with `exportNaming.enabled`.
 
 ### Scheduling
 
@@ -406,6 +429,8 @@ control panel) or in environment variables, which win over both.
 | `vertex.generation.pretty.model` | `gemini-3.6-flash` | Model for prettifying |
 | `vertex.location` | `global` | 3.x Flash models are only served on `global` |
 | `vertex.cleanupUploads` | true | Delete GCS chunks after each part |
+| `exportNaming.enabled` | true | Put the lecture number first in exported names |
+| `exportNaming.numberDigits` | 2 | Width it's padded to, so 10 sorts after 9 |
 | `workspace.enabled` | false | Keep a second copy of each pretty note elsewhere |
 | `workspace.root` | `~/Documents/UniNotes` | Where that copy goes |
 | `prompts.grounding` | `prompts/notes-grounding.txt` | Opens every notes prompt |
@@ -553,7 +578,7 @@ src/
   main.ts              # Panopto pipeline entry point
   panopto/             # scraper, downloader, URL builders
   gemini/              # uploader, prompter, prompts, browser pool, Vertex client
-  notes/               # parser, writer, prettifier
+  notes/               # parser, writer, prettifier, export naming
   db/                  # SQLite schema + tracker
   todo/                # TODO.md manager
   pipeline/            # shared per-lecture flow, part runner, checkpoints, pretty backfill
@@ -572,6 +597,7 @@ scripts/
   test-attachment-detect.ts  # regression test for the attachment check
   test-timestamps.ts   # regression test for timestamp rebasing
   test-blank-detect.ts # regression test for blank-segment detection
+  test-export-names.ts # regression test for exported note filenames
   export-notes.ts      # export to Exports/
 prompts/               # editable prompt defaults, see Configuration → Prompts
   notes-grounding.txt  # "watch the video, don't invent"
