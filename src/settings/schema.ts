@@ -522,7 +522,7 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     group: "Naming",
     type: "text",
     help:
-      "Tokens: {course} {title} {rawTitle} {date} {week} {week2} {term} {termLabel} {year}. " +
+      "Tokens: {course} {title} {rawTitle} {date} {week} {week2} {number} {number2} {term} {termLabel} {year}. " +
       "Anything unresolved drops out with the punctuation around it.",
   },
   {

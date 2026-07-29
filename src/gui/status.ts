@@ -152,16 +152,35 @@ async function checkFfmpeg(): Promise<HealthCheck> {
 function profileLooksAuthenticated(dir: string): boolean {
   // A persistent Playwright profile that has been used has a Default/ subfolder
   // with cookies in it. An empty directory is what `ensureDirectories` creates.
+  //
+  // Chrome moved the cookie DB down into Default/Network/ around M96, but not
+  // every build followed — distro Chromium packages still write Default/Cookies.
+  // Checking only the newer path reports "No saved session" for a profile that
+  // is in fact signed in, and sends you to re-run an auth you don't need, so
+  // accept either.
   try {
-    return fs.existsSync(path.join(dir, "Default", "Network", "Cookies"));
+    return (
+      fs.existsSync(path.join(dir, "Default", "Network", "Cookies")) ||
+      fs.existsSync(path.join(dir, "Default", "Cookies"))
+    );
   } catch {
     return false;
   }
 }
 
 function adcPath(): string {
-  const appData = process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
-  return path.join(appData, "gcloud", "application_default_credentials.json");
+  // gcloud honours CLOUDSDK_CONFIG first, then %APPDATA%\gcloud on Windows and
+  // ~/.config/gcloud everywhere else. The Windows-only path reported the
+  // credentials missing on Linux even when they were present.
+  const configDir =
+    process.env.CLOUDSDK_CONFIG ??
+    (process.platform === "win32"
+      ? path.join(
+          process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
+          "gcloud",
+        )
+      : path.join(os.homedir(), ".config", "gcloud"));
+  return path.join(configDir, "application_default_credentials.json");
 }
 
 async function buildChecks(effective: EffectiveConfig): Promise<HealthCheck[]> {

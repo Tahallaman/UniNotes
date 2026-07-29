@@ -13,6 +13,8 @@
  */
 
 import path from "node:path";
+// Imports nothing itself, which is what keeps the cycle through config.ts shut.
+import { parseLectureNumber } from "./exportName.js";
 
 // ── Terms ─────────────────────────────────────────────────────────────────────
 
@@ -497,11 +499,102 @@ export function renderFolderTemplate(template: string, tokens: Tokens): string[]
   return segments;
 }
 
+// ── Lecture numbers ───────────────────────────────────────────────────────────
+
+
+/**
+ * Which lecture of its course this is, so exports sort in the order they were
+ * given rather than by whatever the department typed first.
+ *
+ * The number comes from the title where the title states one, and from delivery
+ * order where it doesn't. That fallback is why this works a course at a time:
+ * "the third lecture" is not a fact about one recording, it is a fact about its
+ * siblings.
+ *
+ * Numbers stated in titles are taken as given, duplicates included — two
+ * recordings both calling themselves lecture 3 happens when one is a re-record,
+ * and inventing a distinction here would only hide it. Unnumbered lectures are
+ * numbered by date into the gaps the stated ones leave, so the two schemes
+ * coexist in a course that changed its mind halfway through the semester.
+ */
+export interface NumberableLecture {
+  /** Unique within the course — a folder name or a database id. */
+  key: string;
+  title: string;
+  /** Resolved date, for ordering the ones whose titles state no number. */
+  date: string | null;
+}
+
+export function assignLectureNumbers(
+  lectures: readonly NumberableLecture[],
+): Map<string, number> {
+  const numbers = new Map<string, number>();
+  const unnumbered: NumberableLecture[] = [];
+
+  for (const lecture of lectures) {
+    const stated = parseLectureNumber(lecture.title);
+    if (stated !== null) numbers.set(lecture.key, stated);
+    else unnumbered.push(lecture);
+  }
+
+  // Dateless ones last, in the order they arrived: with nothing to sort on,
+  // guessing is worse than leaving them where the caller had them.
+  const byDate = [...unnumbered].sort((a, b) => {
+    if (a.date === b.date) return 0;
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    return a.date < b.date ? -1 : 1;
+  });
+
+  const taken = new Set(numbers.values());
+  let next = 1;
+  for (const lecture of byDate) {
+    while (taken.has(next)) next++;
+    numbers.set(lecture.key, next);
+    taken.add(next);
+  }
+
+  return numbers;
+}
+
+/**
+ * The same, for a mixed list of lectures from every course at once.
+ *
+ * Numbering is per course — the third ENGGEN 403 lecture and the third
+ * COMPSYS 730 lecture are both number three — so the list is split before it is
+ * numbered. One helper because all three callers (both exports and the settings
+ * preview) have the same mixed list and must agree on the answer.
+ */
+export function lectureNumbersByCourse(
+  lectures: readonly (NumberableLecture & { courseCode: string })[],
+): Map<string, number> {
+  const byCourse = new Map<string, NumberableLecture[]>();
+  for (const lecture of lectures) {
+    const list = byCourse.get(lecture.courseCode);
+    if (list) list.push(lecture);
+    else byCourse.set(lecture.courseCode, [lecture]);
+  }
+
+  const numbers = new Map<string, number>();
+  for (const list of byCourse.values()) {
+    for (const [key, number] of assignLectureNumbers(list)) numbers.set(key, number);
+  }
+  return numbers;
+}
+
 // ── Putting it together ───────────────────────────────────────────────────────
 
 export interface LectureFacts extends DateInputs {
   title: string;
   courseCode: string;
+  /**
+   * Where this lecture falls in its course, for `{number}`.
+   *
+   * Not derivable from one lecture, which is why it is passed in rather than
+   * worked out here: "the third lecture" is a fact about a recording's siblings.
+   * assignLectureNumbers() works a course out at a time.
+   */
+  lectureNumber?: number | null;
 }
 
 export interface Placement {
@@ -534,6 +627,7 @@ export function placeLecture(
 
 export function buildTokens(facts: LectureFacts, placement: Placement): Tokens {
   const week = placement.week;
+  const number = facts.lectureNumber ?? null;
   return {
     course: facts.courseCode ?? "",
     title: cleanTitle(facts.title, facts.courseCode),
@@ -541,6 +635,8 @@ export function buildTokens(facts: LectureFacts, placement: Placement): Tokens {
     date: placement.date ?? "",
     week: week === null ? "" : String(week),
     week2: week === null ? "" : String(week).padStart(2, "0"),
+    number: number === null ? "" : String(number),
+    number2: number === null ? "" : String(number).padStart(2, "0"),
     term: placement.term?.folder ?? "",
     termLabel: placement.term?.label ?? "",
     year: placement.date ? placement.date.slice(0, 4) : "",

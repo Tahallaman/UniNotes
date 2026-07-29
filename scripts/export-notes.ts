@@ -17,7 +17,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { CONFIG } from "../config.js";
 import { listLectures } from "../src/gui/library.js";
-import { destinationFor } from "../src/notes/organise.js";
+import { destinationFor, lectureNumbersByCourse } from "../src/notes/organise.js";
 
 const args = process.argv.slice(2);
 const exportRaw = args.length === 0 || args.includes("--raw");
@@ -68,7 +68,12 @@ function copyIfNeeded(src: string, dest: string): void {
 // The library rather than a directory walk: it already merges the database with
 // the disk, which is what gets a hand-corrected date onto a lecture whose folder
 // name still says otherwise.
-for (const entry of listLectures()) {
+const entries = listLectures().filter((e) => e.lectureDir);
+const numbers = lectureNumbersByCourse(
+  entries.map((e) => ({ key: e.key, title: e.title, courseCode: e.courseCode, date: e.lectureDate })),
+);
+
+for (const entry of entries) {
   if (!entry.lectureDir) continue;
 
   const destination = destinationFor(
@@ -77,6 +82,7 @@ for (const entry of listLectures()) {
       courseCode: entry.courseCode,
       resolvedDate: entry.lectureDate,
       resolvedSource: entry.dateSource,
+      lectureNumber: numbers.get(entry.key) ?? null,
     },
     {
       folderTemplate: CONFIG.exports.folderTemplate,

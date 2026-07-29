@@ -38,7 +38,7 @@ import {
   setLectureDate,
   assertInsideLectures,
 } from "./mutations.js";
-import { destinationFor, validateTerms } from "../notes/organise.js";
+import { destinationFor, lectureNumbersByCourse, validateTerms } from "../notes/organise.js";
 import { serveVideo, serveCaptions } from "./video.js";
 import { explain, ExplainUnavailableError } from "./explain.js";
 import {
@@ -277,6 +277,12 @@ function namingPreview(body: Record<string, unknown>): unknown {
   // first, and one without a date if there is one, since that is the case whose
   // behaviour is hardest to predict from the template alone.
   const all = listLectures().filter((e) => e.courseCode && e.title);
+  // Numbered against the whole library, not against the three shown: a lecture's
+  // number depends on its siblings, so previewing {number} from the sample alone
+  // would show one answer and write another.
+  const numbers = lectureNumbersByCourse(
+    all.map((e) => ({ key: e.key, title: e.title, courseCode: e.courseCode, date: e.lectureDate })),
+  );
   const dated = all.filter((e) => e.lectureDate !== null).slice(0, 3);
   const undated = all.find((e) => e.lectureDate === null);
   const samples = undated ? [...dated.slice(0, 2), undated] : dated;

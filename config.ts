@@ -395,6 +395,7 @@ export const DEFAULTS = {
     delayMs: 2_000,
   },
 
+
   /**
    * A second copy of each pretty note, filed into another folder as it's written
    * — typically the OneDrive/Dropbox/Obsidian folder you actually study from.

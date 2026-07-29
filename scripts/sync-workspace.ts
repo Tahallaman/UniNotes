@@ -17,6 +17,7 @@ import path from "node:path";
 import { CONFIG } from "../config.js";
 import { listLectures } from "../src/gui/library.js";
 import { workspaceDestination, syncToWorkspace } from "../src/utils/workspaceSync.js";
+import { lectureNumbersByCourse } from "../src/notes/organise.js";
 
 const dryRun = process.argv.slice(2).includes("--dry-run");
 
@@ -38,7 +39,14 @@ let upToDate = 0;
 let missing = 0;
 let undated = 0;
 
-for (const entry of listLectures()) {
+const entries = listLectures().filter((e) => e.lectureDir);
+// Numbered across the whole library before anything is written: a lecture's
+// number depends on its siblings, so it can't be worked out inside the loop.
+const numbers = lectureNumbersByCourse(
+  entries.map((e) => ({ key: e.key, title: e.title, courseCode: e.courseCode, date: e.lectureDate })),
+);
+
+for (const entry of entries) {
   if (!entry.lectureDir) continue;
 
   const prettyPath = path.join(entry.lectureDir, "lecture.pretty.md");
@@ -52,6 +60,7 @@ for (const entry of listLectures()) {
     courseCode: entry.courseCode,
     resolvedDate: entry.lectureDate,
     resolvedSource: entry.dateSource,
+    lectureNumber: numbers.get(entry.key) ?? null,
   };
 
   if (entry.lectureDate === null) undated++;

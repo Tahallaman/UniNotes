@@ -536,13 +536,25 @@ you're in, so its courses stay at the top of your study folder, and set it to
 something like `Semester 1` for one you've archived.
 
 Names and folders are templates. The tokens are `{course}` `{title}`
-`{rawTitle}` `{date}` `{week}` `{week2}` `{term}` `{termLabel}` `{year}`, and
-anything that can't be worked out drops out along with the punctuation around
-it — so an undated lecture is named `COMPSYS 730 - Lecture 4.md`, not
-`COMPSYS 730 - Lecture 4 - .md`, and skips the week folder rather than landing
-in one named after the problem. `{week}` is available for filenames but isn't
-in the default. Settings shows where three of your real lectures would go as
-you type.
+`{rawTitle}` `{date}` `{week}` `{week2}` `{number}` `{number2}` `{term}`
+`{termLabel}` `{year}`, and anything that can't be worked out drops out along
+with the punctuation around it — so an undated lecture is named
+`COMPSYS 730 - Lecture 4.md`, not `COMPSYS 730 - Lecture 4 - .md`, and skips the
+week folder rather than landing in one named after the problem. `{week}` and
+`{number}` are available for filenames but aren't in the default. Settings shows
+where three of your real lectures would go as you type.
+
+`{number}` is which lecture of its course this is, so a folder of notes sorts in
+the order the lectures were given rather than by whatever the department typed
+first. It comes from the title where the title states one — "Lecture 3", "L03C"
+— and from date order where it doesn't, filling the gaps around the stated ones.
+`{number2}` pads it to two digits, which is what keeps lecture 10 after lecture
+9 in an alphabetical list. To lead with it:
+
+```
+Lecture {number2} - {course} - {title}
+  → Lecture 01 - ENGGEN 403 - What can ENGGEN 403 do for me.md
+```
 
 Don't want any of it? Turn **Sort into weeks** off. No terms to configure, no
 week folders; tidy names still apply.
@@ -591,6 +603,7 @@ control panel) or in environment variables, which win over both.
 | `terms.enabled` | true | Work out a teaching week for each lecture |
 | `terms.list` | *(empty)* | Your terms — name, start date, weeks, optional break |
 | `naming.fileTemplate` | `{course} - {title} - {date}` | How a note file is named |
+| `exports.fileTemplate` | *(inherits)* | Add `Lecture {number2} - ` to lead with the lecture number |
 | `exports.folderTemplate` | `{course}` | Folders below `Exports/Raw/` and `Exports/Pretty/` |
 | `exports.fileTemplate` | *(inherits)* | Blank uses `naming.fileTemplate` |
 | `workspace.enabled` | false | Keep a second copy of each pretty note elsewhere |

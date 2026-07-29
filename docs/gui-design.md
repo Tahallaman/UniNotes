@@ -194,6 +194,22 @@ where it came from, because "week 8" being wrong is a question about the date.
 
 ### Terms, weeks and naming
 
+`{number}` — which lecture of its course this is — arrived from a parallel
+implementation of exported names (PR #1) and is the one part of it that survived
+the merge intact. Two naming systems couldn't both own a path, and templates
+already did everything that one did except this, so it became a token rather than
+a second scheme with its own on/off switch and its own opinion about filenames.
+
+Numbering is a course-wide operation, which is why it is passed into
+`destinationFor` rather than derived inside it: "the third lecture" is a fact
+about a recording's siblings. The number is read out of the title where the title
+states one — `parseLectureNumber` in `src/notes/exportName.ts`, which is all that
+remains of that module — and taken from date order where it doesn't. The original
+ordered unnumbered lectures by month and day scraped out of the notes, with the
+year deliberately discarded because Gemini's dates were unreliable; that is no
+longer necessary here, since resolveDate has already settled a real date by the
+time numbering runs.
+
 Settings holds a **Terms & weeks** group and a **Naming** group. Terms are the one
 setting whose value isn't a scalar, so they get a bespoke editor and validator
 rather than a second config file — everything `settings.json` provides (one place
