@@ -390,9 +390,18 @@ stripped from the first cue — it isn't speech, and left in it burns four secon
 of subtitle over the opening — and the tab says the same thing once, at the top,
 where it belongs.
 
-The three player controls are one segmented group rather than three loose pills:
-they all answer the same question — how the notes behave — and reading as a
-cluster is what makes that legible. The header buttons are borderless until you
+The player controls are segmented groups rather than loose pills: the ones in a
+group all answer the same question, and reading as a cluster is what makes that
+legible. There are two groups, set apart by a gap — everything on the left is
+about how the notes behave and costs nothing to press, and the two on the right
+send a question to Google. That gap is the only thing saying so.
+
+**A− / A+ live next to the Subtitles button and only exist while subtitles are
+showing.** The right size is not a preference you hold once: it depends on how
+wide you have dragged the video, which changes several times in a lecture. Both
+press against `player.subtitleSize`, applied immediately and saved half a second
+later — it is a control you press three or four times in a row while watching the
+result, and one write per press would queue a decision you are still making. The header buttons are borderless until you
 reach for them, so a row of them is one group instead of several competing
 controls, which is what underlined text links beside a large × had become.
 

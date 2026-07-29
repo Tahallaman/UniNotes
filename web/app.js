@@ -1437,13 +1437,70 @@ function applyCueSize(percent) {
   sheet.textContent = `video::cue { font-size: ${size}%; }`;
 }
 
+/** Bounds and step for the A− / A+ pair. Matches player.subtitleSize's schema. */
+const CUE_MIN = 12;
+const CUE_MAX = 100;
+const CUE_STEP = 3;
+
+function currentCueSize() {
+  return Math.min(CUE_MAX, Math.max(CUE_MIN, Number(state.settings.values["player.subtitleSize"]) || 31));
+}
+
 function setSubtitles(on) {
   const cc = document.getElementById("player-cc");
   cc.setAttribute("aria-pressed", String(on));
   // Every track, because a lecture only ever has one but a stale one from the
   // previous lecture showing through would be worse than none.
   for (const track of videoEl.textTracks) track.mode = on ? "showing" : "disabled";
+
+  // The size control only exists while there is something to size. Hidden with
+  // the Subtitles chip itself, so a lecture with no transcript shows neither.
+  const hide = !on || cc.hidden;
+  for (const id of ["player-cc-smaller", "player-cc-bigger"]) {
+    document.getElementById(id).hidden = hide;
+  }
+  refreshCueButtons();
 }
+
+/** Titles carry the live value; there is no room in the bar for a readout. */
+function refreshCueButtons() {
+  const size = currentCueSize();
+  const smaller = document.getElementById("player-cc-smaller");
+  const bigger = document.getElementById("player-cc-bigger");
+  smaller.disabled = size <= CUE_MIN;
+  bigger.disabled = size >= CUE_MAX;
+  smaller.title = `Smaller subtitles — currently ${size}% of the browser's default`;
+  bigger.title = `Bigger subtitles — currently ${size}% of the browser's default`;
+}
+
+/**
+ * Step the subtitle size, applying it now and saving it shortly after.
+ *
+ * Applied before the round trip and debounced on the way out: this is a control
+ * you press three or four times in a row while looking at the result, and one
+ * POST per press would put a queue of writes behind a decision you're still
+ * making.
+ */
+let cueSaveTimer = null;
+function stepCueSize(delta) {
+  const size = Math.min(CUE_MAX, Math.max(CUE_MIN, currentCueSize() + delta));
+  state.settings.values["player.subtitleSize"] = size;
+  applyCueSize(size);
+  refreshCueButtons();
+
+  clearTimeout(cueSaveTimer);
+  cueSaveTimer = setTimeout(
+    guard(async () => {
+      const result = await post("/api/settings", { values: { "player.subtitleSize": size } });
+      state.settings = result.settings;
+      renderSettings();
+    }),
+    500,
+  );
+}
+
+document.getElementById("player-cc-smaller").addEventListener("click", () => stepCueSize(-CUE_STEP));
+document.getElementById("player-cc-bigger").addEventListener("click", () => stepCueSize(CUE_STEP));
 
 function teardownPlayer() {
   player.active = false;
@@ -1454,6 +1511,8 @@ function teardownPlayer() {
   document.getElementById("drawer-details").hidden = true;
   document.getElementById("drawer-fullscreen").hidden = true;
   document.getElementById("player-cc").hidden = true;
+  document.getElementById("player-cc-smaller").hidden = true;
+  document.getElementById("player-cc-bigger").hidden = true;
   document.getElementById("player-explain").hidden = true;
   document.getElementById("player-explain-open").hidden = true;
   document.getElementById("player-pane").hidden = true;
@@ -2220,8 +2279,11 @@ function renderSettings() {
   }));
 
   // Here because this is the one place every settings load and save passes
-  // through, and the size has to reach a player that may already be open.
+  // through, and the size has to reach a player that may already be open —
+  // including its own A− / A+, which would otherwise go stale when the size is
+  // changed from this form instead.
   applyCueSize(state.settings.values["player.subtitleSize"]);
+  refreshCueButtons();
 
   const changed = Object.keys(state.draft);
   document.getElementById("settings-bar").hidden = changed.length === 0;

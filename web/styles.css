@@ -587,8 +587,14 @@ main { padding-bottom: 5rem; }
   padding: .55rem .8rem; border-top: 1px solid var(--line);
   font-size: var(--s-1); background: var(--paper);
 }
-/* One segmented control, not three loose pills: these three all answer "how do
-   the notes behave", so they read better as a single cluster. */
+/* Groups of controls, set apart from each other. The gap is what says the two
+   Explain buttons are a different kind of thing: everything to their left is
+   about how the notes behave and costs nothing to press, and these two send a
+   question to Google. Wraps rather than overflowing on a narrow player. */
+.player-bar-groups { display: flex; align-items: center; gap: .85rem; flex-wrap: wrap; }
+
+/* One segmented control per group, not loose pills: the controls within a group
+   all answer the same question, so they read better as a single cluster. */
 .player-bar-actions {
   display: inline-flex; align-items: stretch;
   border: 1px solid var(--line-firm); border-radius: 7px;
@@ -604,6 +610,11 @@ main { padding-bottom: 5rem; }
 .chip-btn:last-child { border-right: 0; }
 /* Icon only — no label to pad around. */
 .chip-btn-tight { padding-inline: .5rem; }
+/* A− / A+. The letter carries the meaning, so it gets the size and the sign
+   rides small beside it — two same-size glyphs read as a word, not a stepper. */
+.cc-size { font-family: var(--sans); letter-spacing: -.02em; gap: .1rem; }
+.cc-size .cc-sign { font-size: .8em; opacity: .75; }
+.cc-size[hidden] { display: none; }
 .chip-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .chip-btn:hover:not(:disabled) { color: var(--ink); background: var(--sunken); }
 .chip-btn:focus-visible { outline: 2px solid var(--ready); outline-offset: -2px; }

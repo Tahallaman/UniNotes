@@ -305,9 +305,11 @@ download would buy you.
 - **A Transcript tab** beside Pretty and Raw, from Panopto's own captions,
   synced the same way — it highlights and scrolls line by line as the lecture
   plays, and clicking a line jumps there.
-- **Subtitles on the video**, the same transcript, on the Subtitles button.
-  Their size is under **Settings → Player**; the browser's own default is meant
-  for a television across a room and swallows the bottom of the slide.
+- **Subtitles on the video**, the same transcript, on the Subtitles button. The
+  **A−** and **A+** beside it resize them while you watch, since the right size
+  depends on how wide you've dragged the video. The browser's own default is
+  meant for a television across a room and swallows the bottom of the slide, so
+  UniNotes starts at about a third of it. Also under **Settings → Player**.
 - **Ask about what you're watching.** See below.
 - **Turn the sync off** with the Synced button when you'd rather just read.
   Nothing highlights, nothing scrolls itself, a click is a click — the video
