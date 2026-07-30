@@ -775,6 +775,24 @@ the second pass, and is trimmed weakest-first down to exactly its count. The
 share survives as the ceiling that decides how much of what the model offers is
 kept.
 
+**No run-up before a span.** `leadInSeconds` was 2, by analogy with the lead-in a
+click in the notes gets. The analogy was wrong, and it took watching a reel to
+see it. Clicking a note is a jump into a lecture that carries on playing, so two
+seconds of run-up costs nothing; a reel is a cut, and it pays those two seconds
+every time it cuts. At fifty cuts that is a minute and a half of run-ups, each one
+the tail of something you were not meant to hear. Snapping the start back to a cue
+boundary is what stops a cut landing mid-word, and it was always doing the work
+the lead-in was credited with. It stays as a setting, at zero.
+
+**The button in the player bar opens the panel, and does nothing else.** It used
+to toggle the steering as well, so it meant two different things depending on
+whether a reel happened to exist: press it with nothing built and a panel opened,
+press it with something built and the video started jumping. Playing the reel is
+now a control inside the panel, beside the reel it plays. Closing the panel does
+not stop it — the chip stays lit while the reel is steering, because that is the
+fact that explains why the video keeps moving, and it has to be visible from
+wherever you are.
+
 **The reel is saved beside the notes**, as `highlights.json` in the lecture's own
 folder. That is load-bearing rather than an optimisation: the transcript it was
 built from lives in the video cache, which is emptied every time the panel starts

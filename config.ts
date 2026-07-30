@@ -708,15 +708,22 @@ export const DEFAULTS = {
      */
     minSegmentSeconds: 4,
     /**
-     * Seconds of run-up before a span starts.
+     * Seconds of run-up before a span starts. Off.
      *
-     * The same reasoning as the player's own seek lead-in: a boundary that lands
-     * exactly on the first word puts you a beat after the sentence that set it
-     * up. Kept small, because on a fifteen-second span three seconds of run-up
-     * is a fifth of the clip. Snapped back to a real cue boundary afterwards, so
-     * it never cuts into a word.
+     * It was two, by analogy with the player's own seek lead-in — a boundary on
+     * the first word puts you a beat after the sentence that set it up. The
+     * analogy was wrong. Clicking a note is a jump into a lecture that carries
+     * on playing, so a run-up costs you nothing; a reel is a cut, and the two
+     * seconds are spent every time it cuts. At fifty cuts that is a minute and
+     * a half of run-ups, and each one is the tail of something you were not
+     * meant to hear.
+     *
+     * Starts are snapped back to a cue boundary regardless, which is what stops
+     * a cut landing mid-word — that was always doing the work this was credited
+     * with. Kept as a setting because someone editing for a slower lecturer may
+     * want one; it just should not be the default.
      */
-    leadInSeconds: 2,
+    leadInSeconds: 0,
     /**
      * Transcript cues are merged into blocks of at least this many seconds
      * before being sent.

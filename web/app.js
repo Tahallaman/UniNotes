@@ -2336,7 +2336,7 @@ const explainPop = document.getElementById("explain-pop");
 function explainOpen(on) {
   explainDock.hidden = !on;
   explainSplitEl.hidden = !on;
-  document.getElementById("player-explain-open").setAttribute("aria-pressed", String(on));
+  showDockChips();
   if (!on) return;
   applyDockHeight(Number(state.settings.values["explain.dockHeight"]) || 0);
   renderWholeButton();
@@ -2666,7 +2666,23 @@ function dockTab(which) {
   document.getElementById("reel-list").hidden = onExplain;
   document.getElementById("reel-presets").hidden = onExplain;
   document.getElementById("reel-form").hidden = onExplain;
+  showDockChips();
   if (!onExplain) renderReel();
+}
+
+/**
+ * What the two player-bar buttons say about the dock.
+ *
+ * Each one discloses a panel, so what it reports is whether *its* panel is the
+ * one showing — not merely that the dock is open, which had the Explain chip
+ * looking pressed while you were reading the reel. The Highlights chip keeps its
+ * own lit state on top of this, for whether the reel is steering: a different
+ * fact about a different thing, and the one that explains why the video jumps.
+ */
+function showDockChips() {
+  const tab = dockEl.hidden ? "" : dockEl.dataset.tab;
+  document.getElementById("player-highlights").setAttribute("aria-expanded", String(tab === "highlights"));
+  document.getElementById("player-explain-open").setAttribute("aria-pressed", String(tab === "explain"));
 }
 
 document.getElementById("dock-tab-explain").addEventListener("click", () => dockTab("explain"));
@@ -2725,6 +2741,7 @@ function reelLengths() {
 
 function renderReel() {
   reelLengths();
+  showReelPlay();
   const list = document.getElementById("reel-list");
   const form = document.getElementById("reel-form");
   const saved = reelCurrent();
@@ -2837,9 +2854,10 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
   if (on && segments.length === 0) return;
   const was = reel.on;
   reel.on = on;
-  const button = document.getElementById("player-highlights");
-  button.setAttribute("aria-pressed", String(on));
-  button.classList.toggle("on", on);
+  // Lit in the bar even with the panel closed: this is the state that explains
+  // why the video keeps jumping, and it has to be visible from wherever you are.
+  document.getElementById("player-highlights").classList.toggle("on", on);
+  showReelPlay();
 
   if (!on) {
     reel.index = -1;
@@ -2948,19 +2966,38 @@ const buildReel = guard(async (preset, steer = "") => {
  * the lecture you wanted. So the panel opens on Skim / Highlights / Deep with
  * Build beside them, and the press that costs money is the one labelled Build.
  */
+/**
+ * The player bar's Highlights button: open the panel, or close it.
+ *
+ * Only that. It used to toggle the *steering* as well, which made one button
+ * mean two things depending on whether a reel happened to exist — press it with
+ * nothing built and the panel opened, press it with something built and the
+ * video started jumping instead. Playing the reel now has its own control inside
+ * the panel, next to the reel it plays.
+ */
 document.getElementById("player-highlights").addEventListener("click", () => {
-  if (reel.busy) return;
-  if (!reelCurrent()) {
-    if (reel.payload?.unavailable) { toast(reel.payload.unavailable, "bad"); return; }
-    explainOpen(true);
-    dockTab("highlights");
-    return;
-  }
-  setReelOn(!reel.on);
-  // If the panel is already open it follows what you're doing; if it isn't,
-  // turning the reel on is not a reason to take a third of the video away.
-  if (reel.on && !dockEl.hidden) dockTab("highlights");
+  const showing = !dockEl.hidden && dockEl.dataset.tab === "highlights";
+  if (showing) { explainOpen(false); showDockChips(); return; }
+  explainOpen(true);
+  dockTab("highlights");
 });
+
+/** Play the reel, or stop steering. Hidden until there is one to play. */
+document.getElementById("reel-play").addEventListener("click", () => {
+  if (reel.busy) return;
+  setReelOn(!reel.on);
+});
+
+/** Only offered when this preset has a reel behind it. */
+function showReelPlay() {
+  const button = document.getElementById("reel-play");
+  button.hidden = !reelCurrent() || Boolean(reel.busy);
+  button.setAttribute("aria-pressed", String(reel.on));
+  button.textContent = reel.on ? "Stop" : "Play";
+  button.title = reel.on
+    ? "Stop steering — play the whole lecture again"
+    : "Play only these spans, in order, from wherever you are";
+}
 
 /**
  * The three buttons: switch to a reel, or cut one if it doesn't exist yet.

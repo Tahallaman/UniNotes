@@ -606,7 +606,7 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     min: 0,
     max: 30,
     dependsOn: "highlights.enabled",
-    help: "Starting on the first word puts you a beat after the sentence that set it up. Snapped to a real subtitle boundary.",
+    help: "Off by default: a reel pays this on every cut, so at fifty cuts two seconds is a minute and a half of run-ups into things you weren't meant to hear. Starts snap to a subtitle boundary regardless, which is what keeps a cut off the middle of a word.",
   },
   {
     path: "highlights.model",
