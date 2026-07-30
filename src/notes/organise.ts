@@ -382,6 +382,13 @@ export function cleanTitle(raw: string, courseCode?: string | null): string {
   // a tidy name, and both sit in brackets.
   text = text.replace(/\[[^\]]*\]/g, " ");
 
+  // A marker some Panopto titles carry in front of everything: "[405-422]
+  // ^SOFTENG 761 Lecture". Not a separator — nothing sits on the other side of
+  // it — but it stands between the start of the title and the course code, which
+  // is enough to defeat the leading-code strip below and put the code in the
+  // filename twice: "SOFTENG 761 - ^SOFTENG 761 Lecture - 2026-07-29".
+  text = text.replace(/^[\s^~*#]+/, " ");
+
   if (courseCode && courseCode.trim().length > 0) {
     // Tolerates "COMPSYS730" where the folder says "COMPSYS 730".
     const flexible = escapeRegex(courseCode.trim()).replace(/\\?\s+/g, "\\s*");

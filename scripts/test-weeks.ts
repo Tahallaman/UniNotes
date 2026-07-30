@@ -192,6 +192,18 @@ check(
   "a title that is already tidy is left alone",
   cleanTitle("Introduction to Systems Thinking", "ENGGEN 403") === "Introduction to Systems Thinking",
 );
+// Found by running Preview against the real library: the caret stood between
+// the start of the title and the course code, so the leading-code strip missed
+// and the name came out "SOFTENG 761 - ^SOFTENG 761 Lecture - 2026-07-29".
+check(
+  "a stray marker in front doesn't shield the course code",
+  cleanTitle("[405-422] ^SOFTENG 761 Lecture - Wed 29 Jul 10:09 AM (NZT)", "SOFTENG 761") === "Lecture",
+);
+check(
+  "and the marker itself doesn't survive",
+  !cleanTitle("[405-422] ^SOFTENG 761 Lecture - Wed 29 Jul 10:09 AM (NZT)", "SOFTENG 761").includes("^"),
+);
+
 // The code as scaffolding goes; the code as a word in the sentence stays.
 check(
   "a course code inside the sentence survives",
