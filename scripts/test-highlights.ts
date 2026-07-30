@@ -1,11 +1,14 @@
 /**
- * Regression test for the two halves of Highlights that aren't the model.
+ * Regression test for the part of Highlights that isn't the model.
  *
- * `clean` turns whatever the model said into spans that can be played, and
- * `trim` holds a reel to the length it was asked for. Both fail quietly if they
- * fail at all — a span that opens two seconds late still plays, a Skim that came
- * back at a third of the lecture still produces a reel — so the failures worth
- * guarding against are the ones you would not notice while watching.
+ * `clean` turns whatever the model said into spans that can be played: snapped
+ * to real cue boundaries, finished on a sentence, joined where nothing sits
+ * between them. It fails quietly if it fails at all — a span that opens two
+ * seconds late still plays, one that ends mid-word still plays — so the failures
+ * worth guarding against are the ones you would not notice while watching.
+ *
+ * There is no longer a pass that drops spans to reach a target length, and no
+ * score to order one by: what the model returns is the reel.
  *
  * Pure: no filesystem, no network, no model. Every config value the two
  * functions read is passed in.
@@ -13,7 +16,7 @@
  *   npm run test:highlights
  */
 
-import { blocks, clean, gaps, plan, readJsonArray, trim, type Cue, type Segment } from "../src/gui/highlights.js";
+import { blocks, clean, gaps, plan, readJsonArray, type Cue, type Segment } from "../src/gui/highlights.js";
 
 const checks: Array<[string, boolean]> = [];
 function check(name: string, ok: boolean): void {
@@ -32,7 +35,7 @@ const cues: Cue[] = Array.from({ length: 240 }, (_, i) => ({
 // ── clean: boundaries land on real cues ───────────────────────────────────
 
 const snapped = clean(
-  [{ start: "02:02", end: "03:01", weight: 4, why: "mid-cue on both ends" }],
+  [{ start: "02:02", end: "03:01", why: "mid-cue on both ends" }],
   cues,
   1200,
   cfg,
@@ -43,7 +46,7 @@ check("a start snaps back to the cue covering it", snapped[0]?.start === 115);
 check("an end snaps forward to the end of its cue", snapped[0]?.end === 185);
 
 const noLead = clean(
-  [{ start: "02:00", end: "03:00", weight: 4, why: "on a boundary already" }],
+  [{ start: "02:00", end: "03:00", why: "on a boundary already" }],
   cues,
   1200,
   { leadInSeconds: 0, minSegmentSeconds: 30 },
@@ -54,28 +57,28 @@ check("no lead-in leaves an exact boundary alone", noLead[0]?.start === 120);
 
 check(
   "a span shorter than the floor is dropped",
-  clean([{ start: 100, end: 115, weight: 5, why: "twelve seconds of nothing" }], cues, 1200, cfg)
+  clean([{ start: 100, end: 115, why: "twelve seconds of nothing" }], cues, 1200, cfg)
     .length === 0,
 );
 check(
   "a span with no reason is dropped",
-  clean([{ start: 100, end: 200, weight: 5, why: "  " }], cues, 1200, cfg).length === 0,
+  clean([{ start: 100, end: 200, why: "  " }], cues, 1200, cfg).length === 0,
 );
 check(
   "a backwards span is dropped",
-  clean([{ start: 300, end: 200, weight: 5, why: "ends before it starts" }], cues, 1200, cfg)
+  clean([{ start: 300, end: 200, why: "ends before it starts" }], cues, 1200, cfg)
     .length === 0,
 );
 check(
   "an unparseable time is dropped",
-  clean([{ start: "soon", end: "later", weight: 5, why: "no" }], cues, 1200, cfg).length === 0,
+  clean([{ start: "soon", end: "later", why: "no" }], cues, 1200, cfg).length === 0,
 );
 
 // Both forms, because a model asked for MM:SS will sometimes answer in seconds.
 const bothForms = clean(
   [
-    { start: 100, end: 200, weight: 4, why: "seconds" },
-    { start: "05:00", end: "06:00", weight: 4, why: "clock" },
+    { start: 100, end: 200, why: "seconds" },
+    { start: "05:00", end: "06:00", why: "clock" },
   ],
   cues,
   1200,
@@ -87,8 +90,8 @@ check("seconds and MM:SS are both accepted", bothForms.length === 2);
 
 const jumbled = clean(
   [
-    { start: 600, end: 700, weight: 3, why: "second" },
-    { start: 100, end: 200, weight: 3, why: "first" },
+    { start: 600, end: 700, why: "second" },
+    { start: 100, end: 200, why: "first" },
   ],
   cues,
   1200,
@@ -96,20 +99,27 @@ const jumbled = clean(
 );
 check("spans come back in time order", jumbled[0]?.why === "first" && jumbled[1]?.why === "second");
 
+// Two spans over the same seconds are describing one stretch of lecture, so
+// they become one covering both. This used to resolve by deleting the
+// lower-scored span, which threw away material the model had chosen in order to
+// break a tie — and was the last thing the scores were used for.
 const overlapping = clean(
   [
-    { start: 100, end: 300, weight: 2, why: "the weaker one" },
-    { start: 200, end: 400, weight: 5, why: "the stronger one" },
+    { start: 100, end: 300, why: "the first" },
+    { start: 200, end: 400, why: "the second" },
   ],
   cues,
   1200,
   cfg,
 );
-check("an overlap keeps only one span", overlapping.length === 1);
-check("and it keeps the stronger of the two", overlapping[0]?.why === "the stronger one");
+check("an overlap becomes one span", overlapping.length === 1);
+// 95 rather than 100: this fixture carries a 3-second lead-in, so the start
+// snaps back to the cue covering 97.
+check("reaching from the first start to the second end", overlapping[0]?.start === 95 && overlapping[0]?.end === 400);
+check("and neither reason is lost", overlapping[0]?.why === "the first; the second");
 
 const overrun = clean(
-  [{ start: 1100, end: 5000, weight: 5, why: "runs off the end of the recording" }],
+  [{ start: 1100, end: 5000, why: "runs off the end of the recording" }],
   cues,
   1200,
   cfg,
@@ -124,13 +134,13 @@ check("a span is clamped to the recording's length", overrun[0]?.end === 1200);
 // being explained. What is left only catches a runaway.
 
 const runaway = clean(
-  [{ start: 100, end: 900, weight: 5, why: "a span that swallowed the lecture" }],
+  [{ start: 100, end: 900, why: "a span that swallowed the lecture" }],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, maxSegmentSeconds: 20 },
 );
 check("a runaway span is caught by the backstop", runaway[0]?.end === 120);
 
 const uncapped = clean(
-  [{ start: 100, end: 400, weight: 5, why: "far longer than a skim would ask for" }],
+  [{ start: 100, end: 400, why: "far longer than a skim would ask for" }],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4 },
 );
 check("but nothing else caps a span any more", uncapped[0]?.end === 400);
@@ -148,17 +158,17 @@ const spoken: Cue[] = [
 ];
 const sentenceCfg = { leadInSeconds: 0, minSegmentSeconds: 1, finishSentenceSeconds: 12 };
 
-const midClause = clean([{ start: 5, end: 8, weight: 4, why: "ends mid-clause" }], spoken, 100, sentenceCfg);
+const midClause = clean([{ start: 5, end: 8, why: "ends mid-clause" }], spoken, 100, sentenceCfg);
 check("a span ending mid-sentence runs on to the full stop", midClause[0]?.end === 15);
 
-const already = clean([{ start: 0, end: 3, weight: 4, why: "already ends on one" }], spoken, 100, sentenceCfg);
+const already = clean([{ start: 0, end: 3, why: "already ends on one" }], spoken, 100, sentenceCfg);
 check("one that already ends on a sentence stays put", already[0]?.end === 5);
 
-const tooFar = clean([{ start: 5, end: 8, weight: 4, why: "ends mid-clause" }], spoken, 100,
+const tooFar = clean([{ start: 5, end: 8, why: "ends mid-clause" }], spoken, 100,
   { leadInSeconds: 0, minSegmentSeconds: 1, finishSentenceSeconds: 2 });
 check("but it will not wait forever for one", tooFar[0]?.end === 10);
 
-const noFinish = clean([{ start: 5, end: 8, weight: 4, why: "ends mid-clause" }], spoken, 100,
+const noFinish = clean([{ start: 5, end: 8, why: "ends mid-clause" }], spoken, 100,
   { leadInSeconds: 0, minSegmentSeconds: 1 });
 check("and switched off it is exactly as before", noFinish[0]?.end === 10);
 
@@ -166,24 +176,23 @@ check("and switched off it is exactly as before", noFinish[0]?.end === 10);
 
 const split = clean(
   [
-    { start: 100, end: 148, weight: 3, why: "says what a baseline is" },
-    { start: 151, end: 178, weight: 5, why: "says what happens if you get it wrong" },
-    { start: 500, end: 548, weight: 4, why: "somewhere else entirely" },
+    { start: 100, end: 148, why: "says what a baseline is" },
+    { start: 151, end: 178, why: "says what happens if you get it wrong" },
+    { start: 500, end: 548, why: "somewhere else entirely" },
   ],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, joinGapSeconds: 3 },
 );
 check("a passage split into two comes back as one", split.length === 2);
 check("covering both of them", split[0]?.start === 100 && split[0]?.end === 180);
 check("keeping both reasons", /baseline is; .*get it wrong/.test(split[0]?.why ?? ""));
-check("and the stronger weight", split[0]?.weight === 5);
 check("while a genuine cut is left alone", split[1]?.start === 500);
 
 // The join is what a viewer can hear, not what the model wrote: spans far
 // enough apart that real lecture is dropped between them stay separate.
 const apart = clean(
   [
-    { start: 100, end: 148, weight: 4, why: "first" },
-    { start: 200, end: 248, weight: 4, why: "second" },
+    { start: 100, end: 148, why: "first" },
+    { start: 200, end: 248, why: "second" },
   ],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, joinGapSeconds: 3 },
 );
@@ -197,7 +206,7 @@ check("two moments with a gap between them stay two spans", apart.length === 2);
 // this change exists to stop.
 
 const echoed = clean(
-  [{ start: "01:40–01:45", end: "03:15–03:20", weight: 4, why: "a range in both fields" }],
+  [{ start: "01:40–01:45", end: "03:15–03:20", why: "a range in both fields" }],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4 },
 );
 check("a range in the start field reads as its start", echoed[0]?.start === 100);
@@ -211,11 +220,11 @@ check("and a range in the end field reads as its end", echoed[0]?.end === 200);
 // deleting a span.
 
 const tailCfg = { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 2 };
-const tailed = clean([{ start: 100, end: 148, weight: 4, why: "one span" }], cues, 1200, tailCfg);
+const tailed = clean([{ start: 100, end: 148, why: "one span" }], cues, 1200, tailCfg);
 check("a span runs on past its cue boundary", tailed[0]?.end === 152);
 check("and its start is untouched", tailed[0]?.start === 100);
 
-const noTail = clean([{ start: 100, end: 148, weight: 4, why: "one span" }], cues, 1200,
+const noTail = clean([{ start: 100, end: 148, why: "one span" }], cues, 1200,
   { leadInSeconds: 0, minSegmentSeconds: 4 });
 check("no run-out configured is exactly as before", noTail[0]?.end === 150);
 
@@ -223,7 +232,7 @@ check("no run-out configured is exactly as before", noTail[0]?.end === 150);
 // than reaching into it. Both spans survive — an overlap here would have been
 // resolved by deleting one of them.
 const crowded = clean(
-  [{ start: 100, end: 148, weight: 4, why: "first" }, { start: 157, end: 198, weight: 4, why: "second" }],
+  [{ start: 100, end: 148, why: "first" }, { start: 157, end: 198, why: "second" }],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 8 },
 );
 check("a run-out stops where the next span starts", crowded[0]?.end === 155);
@@ -237,63 +246,33 @@ check("the last span still gets its full run-out", crowded[1]?.end === 208);
 // added to the end of the joined span rather than inside it — where it would
 // have been silently swallowed anyway.
 const abutting = clean(
-  [{ start: 100, end: 148, weight: 4, why: "first" }, { start: 151, end: 198, weight: 4, why: "second" }],
+  [{ start: 100, end: 148, why: "first" }, { start: 151, end: 198, why: "second" }],
   cues, 1200, tailCfg,
 );
 check("touching spans are joined, not padded apart", abutting.length === 1);
 check("and the run-out lands on the end of the whole thing", abutting[0]?.end === 202);
 
-const atEnd = clean([{ start: 1180, end: 1195, weight: 4, why: "the last one" }], cues, 1200,
+const atEnd = clean([{ start: 1180, end: 1195, why: "the last one" }], cues, 1200,
   { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 8 });
 check("a run-out cannot pass the end of the recording", atEnd[0]?.end === 1200);
 
 // The backstop is applied before the run-out, so a span held back by it still
 // gets its beat — that span is the one most likely to have been cut mid-word.
 const cappedTail = clean(
-  [{ start: 100, end: 900, weight: 5, why: "long" }],
+  [{ start: 100, end: 900, why: "long" }],
   cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, maxSegmentSeconds: 20, tailSeconds: 2 },
 );
 check("the run-out survives the backstop", cappedTail[0]?.end === 122);
 
-// ── trim: holding a reel to the time it was asked for ─────────────────────
-
-const spans = (list: Array<[number, number, number]>): Segment[] =>
-  list.map(([start, length, weight]) => ({ start, end: start + length, weight, why: `w${weight}` }));
-
-const total = (list: Segment[]) => list.reduce((sum, s) => sum + (s.end - s.start), 0);
-
-// 5 × 60s = 300s of material against a 180s budget.
-const over = spans([[0, 60, 5], [100, 60, 1], [200, 60, 4], [300, 60, 2], [400, 60, 3]]);
-const fitted = trim(over, 180);
-check("an over-long reel is cut to the budget", total(fitted) <= 180);
-check("the weakest spans are the ones dropped", fitted.every((s) => s.weight >= 3));
-check("and the strongest survive", fitted.some((s) => s.weight === 5));
-check("what's left is still in time order", fitted.map((s) => s.start).join() === "0,200,400");
-
-// Undershooting is left alone. A lecture with two minutes worth keeping gives a
-// two-minute reel; padding it out to reach a percentage would be inventing value.
-const under = spans([[0, 30, 5], [100, 30, 4]]);
-check("a short reel is not padded", trim(under, 600).length === 2);
-check("and is returned untouched", total(trim(under, 600)) === 60);
-
-// The cut count is the thing being asked for, so trimming may not undo it: a
-// reel cut from 56 spans to 45 to save ninety seconds is worse in the only
-// dimension anyone measured.
-const many = spans(Array.from({ length: 20 }, (_, i) => [i * 100, 60, 3] as [number, number, number]));
-check("trimming stops at the floor", trim(many, 180, 0, 0, 15).length === 15);
-check("and still trims down to it", trim(many, 180, 0, 0, 5).length === 5);
-
-// Among equals, the longest goes first: dropping one 60-second span beats
-// dropping four 15-second ones, because the cut count is what makes a reel.
-const equals = spans([[0, 60, 3], [100, 15, 3], [200, 15, 3], [300, 15, 3], [400, 15, 3]]);
-const kept = trim(equals, 60);
-check("among equal scores the longest is dropped first", kept.every((s) => s.end - s.start === 15));
-check("which keeps the cut count up", kept.length === 4);
+// A span, for the coverage checks below. There is no score any more: what the
+// model returns is the reel, so there is nothing to rank and nothing to drop.
+const spans = (list: Array<[number, number]>): Segment[] =>
+  list.map(([start, length]) => ({ start, end: start + length, why: `span at ${start}` }));
 
 // ── gaps: what the second pass is told to go and fix ──────────────────────
 
 // An hour of lecture, covered every two minutes: no holes.
-const dense = spans(Array.from({ length: 25 }, (_, i) => [180 + i * 120, 20, 4] as [number, number, number]));
+const dense = spans(Array.from({ length: 25 }, (_, i) => [180 + i * 120, 20] as [number, number]));
 check("a well-covered reel has no gaps", gaps(dense, 3300, 180).length === 0);
 
 // The same, with the middle third missing.
@@ -307,41 +286,21 @@ check("and it is reported with its real bounds", found[0][0] === 1160 && found[0
 // with "any questions", and a reel that skips both is right to.
 // Four minutes of arrival and admin before the first cut, then covered
 // throughout: the exemption is what stops that reading as a hole.
-const lateStart = spans(Array.from({ length: 24 }, (_, i) => [240 + i * 120, 20, 4] as [number, number, number]));
+const lateStart = spans(Array.from({ length: 24 }, (_, i) => [240 + i * 120, 20] as [number, number]));
 check("the opening minutes are not a gap", gaps(lateStart, 3100, 180).length === 0);
 check(
   "nor are the closing ones",
-  gaps(spans([[130, 20, 4]]), 300, 180).length === 0,
+  gaps(spans([[130, 20]]), 300, 180).length === 0,
 );
-check("but a long tail is", gaps(spans([[130, 20, 4]]), 900, 180).length === 1);
+check("but a long tail is", gaps(spans([[130, 20]]), 900, 180).length === 1);
 check("switching the check off finds nothing", gaps(holed, 3300, 0).length === 0);
 check("and an empty reel reports no gaps rather than one big one", gaps([], 3300, 180).length === 0);
-
-// ── trim: coverage outranks the budget ────────────────────────────────────
-
-// Five cuts spread across an hour, the middle one weakest. Trimming to half the
-// material would drop it — except that doing so opens a twenty-minute hole.
-const spread = spans([[200, 60, 5], [800, 60, 4], [1400, 60, 1], [2000, 60, 4], [2600, 60, 5]]);
-check(
-  "a weak span is dropped when nothing depends on it",
-  trim(spread, 240).length === 4,
-);
-check(
-  "but kept when losing it would tear a hole",
-  trim(spread, 240, 600, 3000).length === 5,
-);
-// And the budget still bites where it can do so safely.
-const clustered = spans([[200, 60, 5], [280, 60, 1], [360, 60, 4], [440, 60, 2], [520, 60, 5]]);
-check(
-  "a dense run is still trimmed",
-  trim(clustered, 180, 600, 700).length === 3,
-);
 
 // ── reading back what the model returned ──────────────────────────────────
 
 check(
   "a plain array is read",
-  readJsonArray('[{"start":"1:00","end":"1:20","weight":4,"why":"a"}]').length === 1,
+  readJsonArray('[{"start":"1:00","end":"1:20","why":"a"}]').length === 1,
 );
 check(
   "a fenced array is read",

@@ -746,9 +746,9 @@ about it, and the settings and the dock both say so plainly.
 ### Highlights
 
 The lecture cut down to the parts worth watching. One model call reads the
-transcript and the raw notes and returns *every* span worth watching, each scored
-1–5; the player then plays those spans back to back and skips the rest. Nothing
-is re-encoded — a reel is a list of times.
+transcript and the raw notes and returns every span worth watching; the player
+then plays those spans back to back and skips the rest. Nothing is re-encoded —
+a reel is a list of times.
 
 **Three reels, three calls.** Skim, Highlights and Deep are each built by their
 own request, for their own shape — many very short cuts, a middle, and many
@@ -797,10 +797,24 @@ Two things that measurement settled, both against what the arithmetic assumed.
 boundaries, cues run about six and a half seconds, and nothing comes back shorter
 than two of them — a Skim asked for 9-second cuts returned a median of 16. And
 because of that, **the count is what a reel is actually held to, not the share**.
-Every build now overshoots its share, comes back with more spans than asked after
-the second pass, and is trimmed weakest-first down to exactly its count. The
-share survives as the ceiling that decides how much of what the model offers is
-kept.
+Every build overshoots its share. It used to be trimmed weakest-first back down,
+which is where the 1–5 score earned its keep — except that the trim refused to
+drop anything while the reel had fewer spans than the brief asked for, which is
+nearly always, so it never once ran. The share is now a recommendation made in
+the brief and nothing enforces it.
+
+**No score.** Every span used to come back rated 1–5. That was load-bearing in
+the one-pass design, where three presets cut the same candidate list locally;
+afterwards its only job was ordering an over-length reel for deletion, and that
+deletion never ran. So it cost prompt space and bought a tiebreak and a tooltip.
+
+Worse, it gave the model a way to include something without committing to it. A
+Skim on a 78-minute lecture came back with six consecutive spans reading
+"Displays the Tony Stark profile slide", "Displays Po (Kung Fu Panda) profile
+slide", and four more — every one of them scored 2. The model had correctly
+identified its own filler and put it in anyway, because a low score felt like a
+hedge rather than a decision. A span is now in the reel or it is not, the prompt
+says so in those words, and nothing downstream re-reads the list.
 
 **No run-up before a span.** `leadInSeconds` was 2, by analogy with the lead-in a
 click in the notes gets. The analogy was wrong, and it took watching a reel to
@@ -835,13 +849,13 @@ overruled the model precisely where it mattered — a long span is long because
 something was still being explained, and the cap landed in the middle of it.
 The preset's `minSeconds` likewise no longer floors what the model may choose:
 the ten seconds where the number is said is the point of a reel, not an error to
-round away. Same reasoning for the share, which is now allowed to overrun by
-`overrunAllowance` before anything is dropped: a reel that covers the lecture at
-40% beats one cut to 25% by deleting its weakest third.
+round away. Same reasoning for the share, which nothing enforces at all: a reel
+that covers the lecture at 40% beats one cut to 25% by deleting a third of what
+the model chose.
 
 **Spans with nothing between them are one span.** `joinGapSeconds` joins spans
-that touch or nearly touch, keeping both reasons and the stronger weight. The
-old rule refused to merge, on the grounds that a merged span inherits a reason
+that touch or nearly touch, keeping both reasons. The old rule refused to merge,
+on the grounds that a merged span inherits a reason
 describing half of itself — true, and the answer is to carry both halves rather
 than leave the cut broken in two. The prompt asks for it as well, and that is
 the better half of the fix: three timestamps in a row with a second between them

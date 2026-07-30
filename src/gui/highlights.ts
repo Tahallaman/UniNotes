@@ -15,8 +15,12 @@
  * two lengths of the same one. The price is that changing your mind costs a
  * call, which is why the button opens the panel rather than building on press.
  *
- * The scores survive that change with a narrower job: if a reel comes back
- * longer than it was asked for, the weakest spans are dropped until it fits.
+ * The scores did not survive that change, though they outlived it by a while. A
+ * 1–5 rating on every span was load-bearing when one pass was cut three ways;
+ * afterwards its only job was ordering an over-length reel's spans for deletion,
+ * and that deletion never ran. What it did do was offer the model a way to
+ * include something without committing to it — marginal spans came back scored
+ * 2 rather than left out. A span is now in or out, and the prompt says so.
  *
  * ## What decides what gets cut
  *
@@ -65,8 +69,6 @@ export interface Segment {
   /** Seconds, snapped to a cue boundary. */
   start: number;
   end: number;
-  /** 1–5, the model's own ranking. Only used to trim an over-long reel. */
-  weight: number;
   /** One line saying what happens in it. */
   why: string;
 }
@@ -331,19 +333,6 @@ function writeReel(key: string, reel: Reel): void {
 // ── Keeping a reel to its size ───────────────────────────────────────────────
 
 /**
- * Drop the weakest spans until the reel fits the time it was asked for.
- *
- * The model is told what to aim for and mostly obliges, so this usually does
- * nothing — but "mostly" is not a property to hand a player. Overshooting is the
- * failure that matters: a Skim that comes back at 30% of the lecture is not a
- * skim, and the student finds out by watching it.
- *
- * By weight ascending, so what goes is what the model itself rated lowest.
- * Undershooting is left alone: a lecture with only five minutes worth keeping
- * gives a five-minute reel, and padding it out to reach a percentage would be
- * inventing value.
- */
-/**
  * Stretches of the lecture the reel says nothing about.
  *
  * The measurement behind the second pass. "Cover the whole lecture" is advice a
@@ -372,57 +361,6 @@ export function gaps(
   return found;
 }
 
-export function trim(
-  segments: Segment[],
-  budgetSeconds: number,
-  /**
-   * How long a hole trimming may leave behind. A span whose removal would open
-   * a longer one is kept regardless of how weak it is — the reel has to remain a
-   * run through the whole lecture, and a percentage is not worth a hole.
-   */
-  maxGapSeconds = 0,
-  lectureSeconds = 0,
-  /**
-   * The fewest cuts to leave behind. The count is the thing being asked for, so
-   * trimming may not undo it: a reel that came back with 56 cuts and was cut to
-   * 45 to save ninety seconds has been made worse in the only dimension anyone
-   * asked about.
-   */
-  minKeep = 0,
-): Segment[] {
-  const total = (list: Segment[]) => list.reduce((sum, s) => sum + (s.end - s.start), 0);
-  if (budgetSeconds <= 0 || total(segments) <= budgetSeconds) return segments;
-
-  // Weakest first, and among equals the longest — dropping one 60-second span
-  // beats dropping four 15-second ones, because the cut count is what makes a
-  // reel feel like a reel.
-  const order = segments
-    .map((segment, index) => ({ segment, index }))
-    .sort((a, b) =>
-      (a.segment.weight - b.segment.weight)
-      || ((b.segment.end - b.segment.start) - (a.segment.end - a.segment.start)));
-
-  const dropped = new Set<number>();
-  const kept = () => segments.filter((_, index) => !dropped.has(index));
-  let running = total(segments);
-  // The reel as it arrived, measured once: it is what every candidate is judged
-  // against, and it does not change as spans come out.
-  const holesBefore = maxGapSeconds > 0 ? gaps(segments, lectureSeconds, maxGapSeconds).length : 0;
-
-  for (const { segment, index } of order) {
-    if (running <= budgetSeconds) break;
-    if (segments.length - dropped.size <= minKeep) break;
-    dropped.add(index);
-    // Coverage outranks the budget. Put it back if losing it tears a hole in the
-    // lecture, and go on to the next candidate instead.
-    if (maxGapSeconds > 0 && gaps(kept(), lectureSeconds, maxGapSeconds).length > holesBefore) {
-      dropped.delete(index);
-      continue;
-    }
-    running -= segment.end - segment.start;
-  }
-  return kept();
-}
 
 function payload(reels: Record<PresetName, Reel | null>, unavailable = ""): ReelPayload {
   // From the *effective* config rather than this process's frozen CONFIG — see
@@ -593,8 +531,6 @@ export function clean(
     const why = String(row.why ?? "").trim().slice(0, 300);
     if (!why) continue;
 
-    const weight = Math.min(5, Math.max(1, Math.round(Number(row.weight) || 3)));
-
     let start = snapStart(Math.max(0, from - cfg.leadInSeconds));
     let end = finishSentence(snapEnd(to), cfg.finishSentenceSeconds ?? 0);
     if (lectureSeconds > 0) {
@@ -613,21 +549,18 @@ export function clean(
     }
     if (end - start < cfg.minSegmentSeconds) continue;
 
-    segments.push({ start, end, weight, why });
+    segments.push({ start, end, why });
   }
 
   segments.sort((a, b) => a.start - b.start);
 
-  const kept: Segment[] = [];
-  for (const segment of segments) {
-    const last = kept[kept.length - 1];
-    if (!last || segment.start >= last.end) { kept.push(segment); continue; }
-    // Overlapping. Keep the one that matters more; a merge would leave a span
-    // whose reason describes only part of it.
-    if (segment.weight > last.weight) kept[kept.length - 1] = segment;
-  }
-
-  const joined = join(kept, cfg.joinGapSeconds ?? 0);
+  // Overlaps are handled by the same pass that joins touching spans: an overlap
+  // is a negative gap, and two spans covering the same seconds are describing
+  // one stretch of lecture. There used to be a separate rule here that resolved
+  // an overlap by deleting the lower-scored span, which is the only thing the
+  // scores were still doing and a poor use of them — it threw away material the
+  // model had chosen in order to break a tie.
+  const joined = join(segments, cfg.joinGapSeconds ?? 0);
   return runOut(joined.slice(0, MAX_SEGMENTS), lectureSeconds, cfg.tailSeconds ?? 0);
 }
 
@@ -642,8 +575,7 @@ export function clean(
  * Both reasons are kept, in order. The older rule here refused to merge on the
  * grounds that a merged span inherits a reason describing half of itself — true,
  * and the answer is to carry both halves rather than to leave the cut broken in
- * two. The weight becomes the strongest of them, because the merged span
- * contains whatever earned that weight.
+ * two.
  */
 function join(segments: Segment[], gapSeconds: number): Segment[] {
   if (segments.length === 0) return segments;
@@ -654,7 +586,6 @@ function join(segments: Segment[], gapSeconds: number): Segment[] {
     out[out.length - 1] = {
       start: last.start,
       end: Math.max(last.end, segment.end),
-      weight: Math.max(last.weight, segment.weight),
       // Trimmed at the same 300 the model's own reasons are held to, so a run of
       // joins can't grow one unbounded.
       why: `${last.why}; ${segment.why}`.slice(0, 300),
@@ -1036,20 +967,15 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
     }
   }
 
-  // A ceiling with room in it, not the target.
+  // What the model returned is the reel.
   //
-  // The share says what a reel of this kind should be about; it is not a budget
-  // to be spent to the last second, and a lecture with more in it than usual
-  // should give a longer reel rather than a thinner one. This only bites when
-  // something has gone properly wrong — a "skim" running to half the lecture —
-  // and coverage outranks it either way.
-  const segments = trim(
-    cleaned,
-    lectureSeconds * (presetCfg.share / 100) * (1 + cfg.overrunAllowance / 100),
-    cfg.maxGapSeconds,
-    lectureSeconds,
-    wanted,
-  );
+  // There used to be a pass here that dropped the lowest-scored spans until the
+  // reel fitted its share. It never once ran — it refused to drop anything while
+  // the reel had fewer spans than the brief asked for, which is nearly always —
+  // so the length it was supposed to guarantee was never guaranteed, and the
+  // scores it ordered by were being asked for and thrown away. The share is a
+  // recommendation, made in the brief, where a recommendation belongs.
+  const segments = cleaned;
   if (segments.length === 0) {
     throw new HighlightsUnavailableError(
       "Nothing came back that could be played — no usable spans in the reply. Worth trying again.",

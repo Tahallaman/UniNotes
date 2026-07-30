@@ -722,20 +722,6 @@ export const DEFAULTS = {
      */
     maxSegmentSeconds: 180,
     /**
-     * How far over its share a reel may run before anything is dropped, as a
-     * percentage of the share.
-     *
-     * The share is a brief, not a budget. Trimming to it means dropping spans the
-     * model chose in order to satisfy an arithmetic target it was only ever asked
-     * to aim at, and a reel that covers the lecture properly at 40% is a better
-     * reel than one cut to 25% by deleting its weakest third. Measured: with the
-     * coverage rule already putting most drops back, trimming was achieving
-     * almost nothing except unpredictability.
-     *
-     * So it only acts on a genuine overrun. 0 restores the old strict behaviour.
-     */
-    overrunAllowance: 60,
-    /**
      * Seconds of run-up before a span starts. Off.
      *
      * It was two, by analogy with the player's own seek lead-in — a boundary on

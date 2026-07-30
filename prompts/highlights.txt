@@ -60,9 +60,9 @@ separate span is the material you are dropping before the next one.
   before the aside, not include it because the two are adjacent.
 - Start on the point, not on its run-up. Cut the "so, um, what we're going to
   look at now is" and keep what follows.
-- Be exhaustive rather than selective. Go through in order and take everything
-  that qualifies; a span you are unsure about goes in with a low score rather
-  than being left out.
+- Be thorough rather than hurried: go through the lecture in order and consider
+  everything. But thorough is not the same as inclusive — considering a moment
+  and deciding against it is the work.
 
 FINISH THE SENTENCE
 
@@ -157,25 +157,15 @@ choice and why it was made.
 This is the most reliable filter you have. Apply it to every span before you
 answer, and delete the ones that fail it.
 
-IMPORTANCE
+IN OR OUT
 
-Score every span 1 to 5. The score is how you say what matters most, and it is
-what decides the order things go if a reel ever has to be shortened:
+There is no score and no ranking. A span is either in the reel or it is not, and
+that is the only judgement being asked of you. If you find yourself thinking "this
+is a bit marginal but I'll include it anyway", that is the answer: leave it out.
 
-  5  Without this, the lecture is not understood. The central definition, the
-     key number, the idea the rest is built on, the thing that will be examined.
-  4  Substantial. A step in the main argument, a worked figure, a real example.
-  3  Worth watching if there is room. Useful detail, a good aside on method.
-  2  Marginal.
-  1  Barely worth it.
-
-Do not give everything a 4. About a tenth of your spans should be 5s — with a
-hundred spans that is ten, not forty.
-
-And if you find yourself writing a 2 or a 1, stop and take it out instead. A
-score of 2 is you saying the span is marginal; a reel is not improved by
-material its own editor calls marginal. Scoring it low is not a way to include
-it safely — everything you return is in the reel and will be watched.
+Everything you return will be watched, in full, by someone who chose this reel
+instead of the lecture. Nothing downstream re-reads your list and removes the
+weak ones. You are the editor, and the cut you hand back is the cut.
 
 TIMES
 
@@ -214,9 +204,9 @@ Return JSON and nothing else. No prose before or after, no code fence, no
 commentary.
 
 [
-  { "start": "04:12", "end": "04:31", "weight": 5, "why": "Defines the counterfactual baseline as what happens if you do nothing" },
-  { "start": "04:55", "end": "05:12", "weight": 4, "why": "States that getting the baseline wrong flips the sign of the whole NPV" },
-  { "start": "18:05", "end": "18:27", "weight": 5, "why": "Gives the Value of Statistical Life as $12.5M NZD and where the figure comes from" }
+  { "start": "04:12", "end": "04:31", "why": "Defines the counterfactual baseline as what happens if you do nothing" },
+  { "start": "04:55", "end": "05:12", "why": "States that getting the baseline wrong flips the sign of the whole NPV" },
+  { "start": "18:05", "end": "18:27", "why": "Gives the Value of Statistical Life as $12.5M NZD and where the figure comes from" }
 ]
 
 Note the shape of that example: each span is a stretch worth keeping, and real

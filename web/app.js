@@ -2794,7 +2794,9 @@ function renderReel() {
       el("span", { class: "reel-text", text: segment.why }),
       el("span", { class: "reel-weight", text: `${Math.round(segment.end - segment.start)}s` }),
     );
-    item.title = `${clockText(toVideo(segment.start))}–${clockText(toVideo(segment.end))} · scored ${segment.weight}/5`;
+    // No score any more — a span is in the reel or it isn't, so there is nothing
+    // to rank. Reels built before that carry a weight; it is simply ignored.
+    item.title = `${clockText(toVideo(segment.start))}–${clockText(toVideo(segment.end))}`;
     item.addEventListener("click", () => playSegment(segment));
     return item;
   });

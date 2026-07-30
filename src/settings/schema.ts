@@ -649,16 +649,6 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     help: "A backstop against one span swallowing the lecture, not a shape. Each reel's own longest-cut figure is what the brief asks for; nothing enforces it, because cutting a span back to a number overrules the model exactly where it mattered.",
   },
   {
-    path: "highlights.overrunAllowance",
-    label: "Allowed overrun on the share (%)",
-    group: "Highlights",
-    type: "int",
-    min: 0,
-    max: 400,
-    dependsOn: "highlights.enabled",
-    help: "How far past its share a reel may run before the weakest spans start being dropped. The share is a brief, not a budget, and a reel that covers the lecture at 40% beats one cut to 25% by deleting its weakest third. 0 holds it strictly to the share.",
-  },
-  {
     path: "highlights.model",
     label: "Model",
     group: "Highlights",
@@ -779,7 +769,7 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     group: "Prompts",
     type: "prompt",
     caution:
-      "The end of this one is parsed. Keep the instruction to return a JSON array of start, end, weight and why — everything above it is yours.",
+      "The end of this one is parsed. Keep the instruction to return a JSON array of start, end and why — everything above it is yours.",
     help: "What counts as worth watching, and how spans are scored 1–5. This is where the quality of the whole feature lives. Default: prompts/highlights.txt.",
   },
 
