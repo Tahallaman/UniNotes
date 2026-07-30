@@ -868,10 +868,22 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
 /* The spread has to exceed the largest gap it must close — an h2's 1.4rem top
    margin plus the preceding item's bottom margin — or the fill comes out striped
    wherever the passage crosses a heading. */
+/* A list item's box starts one indent in from a paragraph's, so a passage that
+   mixes the two came out with a stepped left edge instead of one rectangle. The
+   second shadow is the same fill offset left by that indent: it squares the edge
+   off without moving the item, which pulling it out with a negative margin would
+   — that drags the bullet away from its text. */
 .notes[data-synced] [data-t].now {
+  --pull: 0rem;
   background: var(--ready-wash);
-  box-shadow: 0 0 0 .85rem var(--ready-wash);
+  box-shadow:
+    0 0 0 .85rem var(--ready-wash),
+    calc(-1 * var(--pull)) 0 0 .85rem var(--ready-wash);
 }
+/* One step per level of nesting, matching the padding-left on .notes ul/ol. */
+.notes[data-synced] li[data-t].now { --pull: 1.3rem; }
+.notes[data-synced] li li[data-t].now { --pull: 2.6rem; }
+.notes[data-synced] li li li[data-t].now { --pull: 3.9rem; }
 /* A table row can't take a box-shadow that spans its cells, so it fills them. */
 .notes[data-synced] tr[data-t].now :is(td, th) { background: var(--ready-wash); }
 
