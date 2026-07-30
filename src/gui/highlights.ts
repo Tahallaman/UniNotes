@@ -498,8 +498,13 @@ export function clean(
   lectureSeconds: number,
   // Narrowed to what it actually reads, so a test can hand it three numbers
   // rather than a whole config.
-  cfg: { leadInSeconds: number; minSegmentSeconds: number; maxSeconds?: number } =
-    effectiveConfig().highlights,
+  cfg: {
+    leadInSeconds: number;
+    minSegmentSeconds: number;
+    maxSeconds?: number;
+    /** Optional so a test can hand this three numbers and mean no run-out. */
+    tailSeconds?: number;
+  } = effectiveConfig().highlights,
 ): Segment[] {
   const starts = cues.map((c) => c.start);
 
@@ -577,7 +582,31 @@ export function clean(
     if (segment.weight > last.weight) kept[kept.length - 1] = segment;
   }
 
-  return kept.slice(0, MAX_SEGMENTS);
+  return runOut(kept.slice(0, MAX_SEGMENTS), lectureSeconds, cfg.tailSeconds ?? 0);
+}
+
+/**
+ * Give every span a beat to finish on.
+ *
+ * A cue's end is where the transcriber stopped writing, which is a word or two
+ * before the speaker stopped talking — so a cut on that boundary takes the end
+ * of the sentence with it. See highlights.tailSeconds for the measurement.
+ *
+ * Last of all, deliberately. Ahead of the cap it would be capped away on exactly
+ * the spans already at their ceiling; ahead of the overlap pass a span reaching a
+ * second into its neighbour would be deleted outright rather than shortened,
+ * because that pass resolves an overlap by dropping the lighter span. Here the
+ * only thing it can do is extend a span into silence it already owns.
+ */
+function runOut(segments: Segment[], lectureSeconds: number, tailSeconds: number): Segment[] {
+  if (tailSeconds <= 0) return segments;
+  return segments.map((segment, index) => {
+    // Whatever comes next owns the time after it: the following span, or the end
+    // of the lecture. Where a span already runs up to the next one, playback is
+    // continuous and nothing was being clipped, so this comes to nothing.
+    const next = segments[index + 1]?.start ?? (lectureSeconds > 0 ? lectureSeconds : Infinity);
+    return { ...segment, end: Math.min(segment.end + tailSeconds, Math.max(segment.end, next)) };
+  });
 }
 
 export interface BuildRequest {
@@ -791,6 +820,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
     leadInSeconds: cfg.leadInSeconds,
     minSegmentSeconds: Math.max(cfg.minSegmentSeconds, presetCfg.minSeconds),
     maxSeconds: presetCfg.maxSeconds,
+    tailSeconds: cfg.tailSeconds,
   };
   const ask = (turns: Turn[]) =>
     vertexLimit(() =>

@@ -811,6 +811,20 @@ the tail of something you were not meant to hear. Snapping the start back to a c
 boundary is what stops a cut landing mid-word, and it was always doing the work
 the lead-in was credited with. It stays as a setting, at zero.
 
+**But a run-out after one.** `tailSeconds` is 2, and the asymmetry is the point.
+A span ends on a cue boundary, and a cue's end is where the transcriber stopped
+writing rather than where the speaker stopped talking — measured on a real reel
+the cut took the last word or two off, by almost exactly two seconds, every
+time. So the run-up buys the tail of something you were not meant to hear and
+the run-out buys the end of the sentence you were. It is added last of all:
+after the preset's ceiling, which would otherwise cap it away on exactly the
+spans most likely to be cut mid-sentence, and after the pass that resolves
+overlaps by dropping a span, which would delete a span for reaching a second
+into its neighbour rather than shorten it. Then it is clamped to wherever the
+next span starts, so where two spans already abut it comes to nothing — playback
+is continuous across that join and nothing was being clipped there. It is baked
+into the stored cut, so changing it applies to reels built from then on.
+
 **Two buttons, not one that means two things.** Highlights plays the reel and
 stops it; the button beside it opens and closes the panel. That is the second
 arrangement — the first had a single button whose meaning depended on whether a

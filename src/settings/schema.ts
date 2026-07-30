@@ -609,6 +609,16 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     help: "Off by default: a reel pays this on every cut, so at fifty cuts two seconds is a minute and a half of run-ups into things you weren't meant to hear. Starts snap to a subtitle boundary regardless, which is what keeps a cut off the middle of a word.",
   },
   {
+    path: "highlights.tailSeconds",
+    label: "Run-out after a span (seconds)",
+    group: "Highlights",
+    type: "int",
+    min: 0,
+    max: 30,
+    dependsOn: "highlights.enabled",
+    help: "On at two, because a span ends where the transcript's cue ends and the speaker is usually a word or two past that. Clamped to wherever the next cut starts, so it can't overrun its neighbour. Applies to reels built from here on — it is baked into the cut, so changing it means rebuilding.",
+  },
+  {
     path: "highlights.model",
     label: "Model",
     group: "Highlights",

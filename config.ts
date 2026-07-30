@@ -725,6 +725,27 @@ export const DEFAULTS = {
      */
     leadInSeconds: 0,
     /**
+     * Seconds of run-out after a span ends. On, at two.
+     *
+     * The mirror of the run-up, and unlike it this one earns its keep. A span
+     * closes on a subtitle cue's end, but a cue's end is where the transcriber
+     * stopped writing, not where the speaker stopped talking — the last word or
+     * two lands after it, and the cut takes them off. Measured on a real reel it
+     * was almost exactly two seconds, every time.
+     *
+     * Added after the cut is capped and after overlaps are resolved, and clamped
+     * to wherever the next span starts, so it can neither push a span past its
+     * preset's ceiling nor collide with its neighbour. Where the next span
+     * follows immediately there is nothing to add: playback is already
+     * continuous there, so nothing was being clipped.
+     *
+     * Unlike the run-up this is paid on every cut too — fifty cuts is a hundred
+     * seconds — but it buys back the end of fifty sentences rather than the
+     * front of fifty run-ups, and the reel's budget is measured after it, so the
+     * share still holds.
+     */
+    tailSeconds: 2,
+    /**
      * Transcript cues are merged into blocks of at least this many seconds
      * before being sent.
      *

@@ -150,6 +150,57 @@ const cappedBack = clean(
 check("a ceiling just inside a cue rounds back to its start", cappedBack[0]?.end === 115);
 check("which keeps the span under the ceiling", (cappedBack[0]?.end ?? 0) - 100 <= 17);
 
+// ── clean: the run-out at the end of a span ───────────────────────────────
+//
+// A cue's end is where the transcriber stopped, not where the speaker did, so
+// each span gets a beat past its boundary. The whole point is that it survives
+// everything else clean() does — the cap, and the pass that resolves overlaps by
+// deleting a span.
+
+const tailCfg = { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 2 };
+const tailed = clean([{ start: 100, end: 148, weight: 4, why: "one span" }], cues, 1200, tailCfg);
+check("a span runs on past its cue boundary", tailed[0]?.end === 152);
+check("and its start is untouched", tailed[0]?.start === 100);
+
+const noTail = clean([{ start: 100, end: 148, weight: 4, why: "one span" }], cues, 1200,
+  { leadInSeconds: 0, minSegmentSeconds: 4 });
+check("no run-out configured is exactly as before", noTail[0]?.end === 150);
+
+// 8s of run-out against a 5s gap: it stops where the next span starts rather
+// than reaching into it. Both spans survive — an overlap here would have been
+// resolved by deleting one of them.
+const crowded = clean(
+  [{ start: 100, end: 148, weight: 4, why: "first" }, { start: 157, end: 198, weight: 4, why: "second" }],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 8 },
+);
+check("a run-out stops where the next span starts", crowded[0]?.end === 155);
+check("so it never overlaps its neighbour", (crowded[0]?.end ?? 0) <= (crowded[1]?.start ?? 0));
+check("and no span is lost to it", crowded.length === 2);
+// 198 snaps out to the cue ending at 200, and nothing follows it, so it takes
+// the whole 8 seconds.
+check("the last span still gets its full run-out", crowded[1]?.end === 208);
+
+// Spans that already abut have nothing to add: playback is continuous across
+// that join, so nothing was being clipped there in the first place.
+const abutting = clean(
+  [{ start: 100, end: 148, weight: 4, why: "first" }, { start: 151, end: 198, weight: 4, why: "second" }],
+  cues, 1200, tailCfg,
+);
+check("nothing is added where the next span follows immediately", abutting[0]?.end === 150);
+
+const atEnd = clean([{ start: 1180, end: 1195, weight: 4, why: "the last one" }], cues, 1200,
+  { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 8 });
+check("a run-out cannot pass the end of the recording", atEnd[0]?.end === 1200);
+
+// Deliberately after the cap: a span already at its preset's ceiling is the one
+// most likely to be cut mid-sentence, so capping the run-out away would take it
+// off exactly where it is needed.
+const cappedTail = clean(
+  [{ start: 100, end: 400, weight: 5, why: "long" }],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 20, tailSeconds: 2 },
+);
+check("the run-out survives the preset's ceiling", cappedTail[0]?.end === 122);
+
 // ── trim: holding a reel to the time it was asked for ─────────────────────
 
 const spans = (list: Array<[number, number, number]>): Segment[] =>
