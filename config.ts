@@ -633,40 +633,57 @@ export const DEFAULTS = {
      * the band it should sit in — together they decide how often the reel cuts,
      * which is the thing that actually distinguishes the three.
      *
+     * `minSpans` is the number of cuts that preset is recommended to have, used
+     * when share ÷ cut length would ask for fewer. A recommendation and not a
+     * quota: somewhat fewer or somewhat more is fine, and only a reel well short
+     * of it earns a second pass. What it rules out is the failure mode — share ÷
+     * cut length came to around forty on a 45-minute lecture, and forty still
+     * watches like a summary. The number of times a reel cuts is what makes it a
+     * reel. When it binds, the cut length is derived back from it rather than
+     * left contradicting it — more cuts inside the same total means shorter ones
+     * — and clamped to the preset's own band so it can't turn Deep into Skim.
+     *
+     * It is per-preset because it is the only lever that makes Skim genuinely
+     * shorter than the others. One shared count of fifty forced all three to
+     * roughly the same length on a 44-minute lecture — fifty cuts of a length
+     * anyone can follow is thirteen to twenty-five minutes whatever the share
+     * says — so they differed by the character of the cut and not by how long
+     * they ran. A short reel means fewer cuts, not shorter ones.
+     *
      * Percentages rather than fractions so each is a plain integer in Settings;
      * a box holding 0.25 is a box someone will eventually type 25 into.
      */
     presets: {
       /**
-       * A fast run through the whole lecture: many very short cuts.
+       * A fast run through the whole lecture: short cuts, and fewer of them.
        *
-       * 20% rather than the 12% this started at, because 12% and a fifty-cut
-       * floor cannot both be true — fifty cuts inside eleven per cent of a
-       * 44-minute lecture is six seconds each, which is shorter than a subtitle
-       * cue and far too short to say anything. The count is what was asked for,
-       * so the share moved to fit it.
+       * Back to the 12% this started at, and the reason it ever left is the
+       * reason the count is now per-preset: 12% and a fifty-cut floor cannot
+       * both be true, because fifty cuts inside twelve per cent of a 44-minute
+       * lecture is six seconds each, shorter than a subtitle cue. Thirty-five
+       * makes Skim the one you watch when you have ten minutes rather than
+       * twenty — measured, 35 cuts and 9:09 against Highlights' 50 and 19:36.
+       *
+       * The share still reads low against that 9:09, and knowingly. Spans snap
+       * to cue boundaries, cues on this recording average six and a half
+       * seconds, and nothing comes back under two of them: the shortest cut in
+       * a measured Skim was 12s and the median 16s, against the 9s the
+       * arithmetic asked for. So the share is not the run time here — it is the
+       * ceiling that decides how many of the spans the model offers are kept,
+       * and the count is what the reel is actually held to.
        */
-      skim: { share: 20, minSeconds: 6, maxSeconds: 16, aimSeconds: 10 },
+      skim: { share: 12, minSeconds: 6, maxSeconds: 16, aimSeconds: 10, minSpans: 35 },
       /** The middle, and the one the button is named after. */
-      highlights: { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15 },
-      /** Everything worth hearing, with room for each point to finish. */
-      deep: { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25 },
+      highlights: { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15, minSpans: 50 },
+      /**
+       * Everything worth hearing, with room for each point to finish.
+       *
+       * The highest count of the three, because "thorough" is a promise about
+       * how much of the lecture is in it, and at 25-second cuts the share alone
+       * asks for barely fifty.
+       */
+      deep: { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25, minSpans: 60 },
     },
-    /**
-     * The number of cuts a reel is recommended to have, when share ÷ cut length
-     * would ask for fewer.
-     *
-     * A recommendation and not a quota: somewhat fewer or somewhat more is fine,
-     * and only a reel well short of it earns a second pass. What it rules out is
-     * the failure mode — share ÷ cut length came to around forty on a 45-minute
-     * lecture, and forty still watches like a summary. The number of times a reel
-     * cuts is what makes it a reel.
-     *
-     * When it binds, the cut length is derived back from it rather than left
-     * contradicting it — fifty cuts inside the same total means shorter ones —
-     * and clamped to each preset's own band so it can't turn Deep into Skim.
-     */
-    minSpans: 50,
     /**
      * How long a stretch of lecture may go unmentioned before it counts as a
      * hole, in seconds.

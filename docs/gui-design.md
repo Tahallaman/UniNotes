@@ -695,33 +695,44 @@ built for none of them — what came back was five spans of two to four minutes
 each, which suited nothing. A skim and a deep pass are different editing jobs,
 not two lengths of the same one.
 
-Each preset is a **share** of the lecture and a **cut length**: 20% in 10-second
-cuts, 25% in 15s, 45% in 25s. The share adapts where a number of minutes cannot —
-ten minutes is most of a 25-minute lab and nothing of a two-hour lecture — and
-the cut length is what actually distinguishes the three, because share ÷ length
-is how many times the reel cuts. Both reach the model as an explicit span count,
-since "cut often" is advice a model can satisfy with twenty spans and "around
-fifty" is not.
+Each preset is a **share** of the lecture, a **cut length** and a **cut count**:
+12% in 10-second cuts about 35 times, 25% in 15s about 50 times, 45% in 25s about
+60 times. The share adapts where a number of minutes cannot — ten minutes is most
+of a 25-minute lab and nothing of a two-hour lecture. The count reaches the model
+explicitly, since "cut often" is advice a model can satisfy with twenty spans and
+"around fifty" is not.
 
-**Fifty is what the count is held up against** when share ÷ cut length would ask
-for fewer. Forty cuts still watches like a summary; what makes a keynote recap
-feel like one is the sheer number of times it cuts. It is a recommendation rather
-than a quota — somewhat fewer or somewhat more is fine, and only a reel well
-short of it earns a second pass — but where it binds, the cut length is derived
-back from it rather than left contradicting it, clamped to the preset's own band
-so it can't turn Deep into Skim.
+**The count is what the arithmetic is held up against** when share ÷ cut length
+would ask for fewer. Forty cuts still watches like a summary; what makes a
+keynote recap feel like one is the sheer number of times it cuts. It is a
+recommendation rather than a quota — somewhat fewer or somewhat more is fine, and
+only a reel well short of it earns a second pass — but where it binds, the cut
+length is derived back from it rather than left contradicting it, clamped to the
+preset's own band so it can't turn Deep into Skim.
 
 The share is a soft ceiling, not a quota. It is enforced at 1.5×, and both
 coverage and the cut count outrank it: a lecture with more in it than usual
 should give a longer reel rather than a thinner one, a percentage is never worth
 a hole in the story, and trimming may not undo the count that was asked for.
 
-One consequence worth knowing. Fifty cuts of a length anyone can follow is
-thirteen to twenty-five minutes whatever the share says, so on the 44-minute
-lecture these were tuned against the three came out at 14, 20 and 25 minutes.
-They differ by the *character* of the cut — 53 terse statements, 50 fuller ones,
-45 with room to finish a thought — more than by how long they run. A genuinely
-short Skim would mean fewer cuts for that preset, not shorter ones.
+**The count is per-preset because it is the only lever that changes a reel's
+length.** One shared floor of fifty was tried first, and on the 44-minute lecture
+all three came out between 13 and 25 minutes — because fifty cuts of a length
+anyone can follow *is* thirteen to twenty-five minutes, whatever share it was
+given. They differed by the character of the cut, not by how long they ran, which
+is not what someone choosing Skim over Deep is choosing. Thirty-five against
+fifty against sixty is that choice, and measured on the same lecture it gives
+9:09, 19:36 and 26:19, none of them with a hole in it.
+
+Two things that measurement settled, both against what the arithmetic assumed.
+**Cut length has a floor the model will not go under**: spans snap to cue
+boundaries, cues run about six and a half seconds, and nothing comes back shorter
+than two of them — a Skim asked for 9-second cuts returned a median of 16. And
+because of that, **the count is what a reel is actually held to, not the share**.
+Every build now overshoots its share, comes back with more spans than asked after
+the second pass, and is trimmed weakest-first down to exactly its count. The
+share survives as the ceiling that decides how much of what the model offers is
+kept.
 
 **The reel is saved beside the notes**, as `highlights.json` in the lecture's own
 folder. That is load-bearing rather than an optimisation: the transcript it was

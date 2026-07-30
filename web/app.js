@@ -2553,8 +2553,8 @@ function reelLengths() {
     button.title = built
       ? `${built.segments.length} spans, ${clockText(built.seconds)} — already built, free to switch to`
       : preset
-        ? `Not built yet. One call, aiming for ${preset.share}% of the lecture in `
-          + `${preset.minSeconds}–${preset.maxSeconds} second cuts.`
+        ? `Not built yet. One call, aiming for around ${preset.minSpans} cuts of `
+          + `${preset.minSeconds}–${preset.maxSeconds} seconds — about ${preset.share}% of the lecture.`
         : "";
     // Boolean(), because `busy` holds the preset being built rather than a flag
     // — the panel says which one it is cutting.

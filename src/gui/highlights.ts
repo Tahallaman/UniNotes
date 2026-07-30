@@ -81,6 +81,8 @@ export interface Preset {
   maxSeconds: number;
   /** The middle of the band the model is asked to aim for. */
   aimSeconds: number;
+  /** How many cuts this reel is recommended to have. See `plan`. */
+  minSpans: number;
 }
 
 export interface Reel {
@@ -566,8 +568,14 @@ export interface BuildRequest {
  * out lower than a reel wants to be — forty cuts still reads as a summary, and
  * the thing that makes a keynote recap feel like one is the sheer number of
  * times it cuts. So the count has a floor, and when the floor is what binds, the
- * cut length is derived back from it rather than left contradicting it: fifty
+ * cut length is derived back from it rather than left contradicting it: more
  * cuts inside the same total simply means shorter ones.
+ *
+ * The floor is the preset's own, which is what lets the three differ in length
+ * rather than only in the character of the cut. A shared floor made every reel
+ * on a 44-minute lecture come out between thirteen and twenty-five minutes,
+ * because that is what its number of cuts multiplied by a watchable cut length
+ * comes to, whatever share it was given.
  *
  * Clamped to the preset's own band, so a floor can't turn Deep into Skim. Where
  * that clamp bites the reel runs over its share, which is allowed — the share is
@@ -576,19 +584,19 @@ export interface BuildRequest {
  * Shared with the check that decides whether to ask for a second pass, so the
  * two can't drift apart and complain about a number nobody was told.
  */
-export function plan(cfg: Preset, lectureSeconds: number, minSpans: number): {
+export function plan(cfg: Preset, lectureSeconds: number): {
   target: number;
   spans: number;
   aimSeconds: number;
 } {
   const target = lectureSeconds * (cfg.share / 100);
-  const spans = Math.max(minSpans, Math.round(target / cfg.aimSeconds));
+  const spans = Math.max(cfg.minSpans, Math.round(target / cfg.aimSeconds));
   const aimSeconds = Math.max(cfg.minSeconds, Math.min(cfg.maxSeconds, Math.round(target / spans)));
   return { target, spans, aimSeconds };
 }
 
-function brief(preset: PresetName, cfg: Preset, lectureSeconds: number, minSpans: number): string {
-  const { target, spans, aimSeconds } = plan(cfg, lectureSeconds, minSpans);
+function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string {
+  const { target, spans, aimSeconds } = plan(cfg, lectureSeconds);
   const minutes = Math.max(1, Math.round(lectureSeconds / 60));
 
   const character: Record<PresetName, string> = {
@@ -672,7 +680,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   let body =
     `Lecture: "${entry.title}" (${entry.courseCode}). ` +
     `The recording runs ${clockText(lectureSeconds)}.` +
-    section("The brief for this reel", brief(preset, presetCfg, lectureSeconds, cfg.minSpans));
+    section("The brief for this reel", brief(preset, presetCfg, lectureSeconds));
 
   if (overview.topics.length > 0 || overview.summary) {
     body += section(
@@ -696,7 +704,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // Last, and repeated from the top of the instruction: the length band and the
   // span count are the two things that decide whether this comes out a reel or a
   // table of contents, and the end of a long prompt is where attention is.
-  body += section("The brief, again", brief(preset, presetCfg, lectureSeconds, cfg.minSpans));
+  body += section("The brief, again", brief(preset, presetCfg, lectureSeconds));
 
   // Trimmed from the *end*, so a very long recording loses its last stretch
   // rather than its first. Losing the front would be worse: the opening of a
@@ -746,7 +754,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
    */
   // The same arithmetic the brief was written from, so the note can't complain
   // about a number the model was never given.
-  const { spans: wanted, aimSeconds } = plan(presetCfg, lectureSeconds, cfg.minSpans);
+  const { spans: wanted, aimSeconds } = plan(presetCfg, lectureSeconds);
   const average = cleaned.length > 0
     ? cleaned.reduce((sum, s) => sum + (s.end - s.start), 0) / cleaned.length
     : 0;

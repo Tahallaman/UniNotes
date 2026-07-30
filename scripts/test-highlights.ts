@@ -259,25 +259,37 @@ check("and a reply with no list at all is an error", unreadable);
 
 // ── plan: how many cuts to ask for, and how long ──────────────────────────
 
-const hl = { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15 };
+const hl = { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15, minSpans: 50 };
 
 // A 44-minute lecture: 25% is 11 minutes, which at 15s a cut is only 44 of them.
-const floored = plan(hl, 2632, 50);
+const floored = plan(hl, 2632);
 check("the floor lifts the count when the arithmetic falls short", floored.spans === 50);
 check("and the cut length is derived back from it", floored.aimSeconds === 13);
 check("so the total is unchanged", Math.abs(floored.spans * floored.aimSeconds - floored.target) < 60);
 
 // A 90-minute lecture already clears the floor on its own.
-const long = plan(hl, 5400, 50);
+const long = plan(hl, 5400);
 check("a long lecture asks for more than the floor", long.spans === 90);
 check("and keeps its intended cut length", long.aimSeconds === 15);
 
 // The floor may not turn one preset into another: a Deep cut is clamped at its
 // own minimum even when the count would imply something shorter.
-const deep = { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25 };
-const shortLecture = plan(deep, 900, 50);
+const deep = { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25, minSpans: 60 };
+const shortLecture = plan(deep, 900);
 check("the preset's own floor still binds", shortLecture.aimSeconds === 12);
 check("even though that overruns the share", shortLecture.spans * shortLecture.aimSeconds > shortLecture.target);
+
+// The point of the count being per-preset: on the same lecture the three come
+// out different lengths, rather than all landing where fifty watchable cuts do.
+const skim = { share: 12, minSeconds: 6, maxSeconds: 16, aimSeconds: 10, minSpans: 35 };
+const short = plan(skim, 2632);
+const thorough = plan(deep, 2632);
+check("a lower count is what makes Skim genuinely shorter", short.spans === 35);
+check("without shortening its cuts below what a cue can say", short.aimSeconds >= skim.minSeconds);
+check(
+  "and Deep runs several times longer on the same lecture",
+  thorough.spans * thorough.aimSeconds > short.spans * short.aimSeconds * 3,
+);
 
 let bad = 0;
 for (const [n, ok] of checks) {
