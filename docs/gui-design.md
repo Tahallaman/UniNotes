@@ -289,12 +289,13 @@ video is not by itself a request to watch one.
 └────────────────────────────────────┴─────────────────────────────────────┘
 ```
 
-**Raw is the tab a video opens on**, and Pretty the one everything else does. The
-prettifier restructures the notes and thins out the timestamps in the process,
-and timestamps are what the whole sync runs on — so the tab that is better to
-read is the wrong one to watch against. Only on the opening that starts a player;
-a redraw (correcting a date, say) is not allowed to move you off the tab you
-chose.
+**Pretty is the tab a lecture opens on**, watching or not, and after that it is
+whichever you last chose. Opening a video onto Raw was tried, on the reasoning
+that the prettifier thins out the timestamps the sync runs on — but Pretty is
+the version worth reading, and being dropped onto the raw dump every time a
+player opened meant one more click before the notes were legible. Enough
+timestamps survive prettifying to sync against; Raw is a tab away when you want
+the dense ones.
 
 **A tab switch is not a scroll**, which took a guard to make true. Replacing the
 pane's contents resets `scrollTop` to 0 and the browser reports that like any

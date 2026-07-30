@@ -834,7 +834,7 @@ document.getElementById("lib-actions").addEventListener("click", guard(async (ev
  * every per-lecture action, and it was unreachable for exactly the lectures you
  * had done the most with. Watching is now a thing you press.
  */
-function openDrawer(key, play = false, keepTab = false) {
+function openDrawer(key, play = false) {
   state.drawerKey = key;
   const entry = state.entries.find((e) => e.key === key);
   if (!entry) return;
@@ -914,13 +914,11 @@ function openDrawer(key, play = false, keepTab = false) {
   }
   facts.append(actions);
 
-  // Raw is the tab you want with a video in front of you. The prettifier
-  // restructures the notes and, in doing so, thins out the timestamps — which
-  // are what the whole sync is built on, and the reason to have the two side by
-  // side at all. Reading is what Pretty is for, and reading is what you do with
-  // no video open, so that stays the default there.
-  if (play && entry.hasRaw && !keepTab) state.noteTab = "raw";
-
+  // No tab is forced on the way in. Pretty is where a lecture opens, here and
+  // in the player alike — it is the readable version and the one you want in
+  // front of you — and after that the tab is simply the one you last chose,
+  // which is the behaviour of every other pane in the panel.
+  //
   // The transcript stands on its own — it's a file beside the notes, so the tab
   // is offered whether or not there's a video to sync it to.
   const transcriptTab = document.querySelector('.drawer-tab[data-note="transcript"]');
@@ -967,9 +965,8 @@ function dateControl(entry) {
     await refreshLibrary();
     const updated = state.entries.find((e) => e.key === entry.key);
     // Reopened in whatever mode it was in — correcting a date shouldn't throw
-    // you out of the player you were watching in, nor off the tab you were on:
-    // this is a redraw, not the opening that gets to pick a default.
-    if (updated) openDrawer(updated.key, player.active, true);
+    // you out of the player you were watching in. The tab looks after itself.
+    if (updated) openDrawer(updated.key, player.active);
     refreshPreview();
   }));
   wrap.append(input);
