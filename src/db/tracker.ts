@@ -35,8 +35,13 @@ export interface LectureRow {
   resume_at: number | null;
   /** The recording's length, so the Library can show a fraction. */
   video_seconds: number | null;
-  /** Seconds the downloaded file runs ahead of the transcript. Usually 0. */
-  caption_offset: number | null;
+  /**
+   * Seconds the downloaded file runs ahead of the transcript. Usually 0.
+   *
+   * Not nullable: the column is NOT NULL DEFAULT 0, so the ALTER that adds it
+   * backfills every existing row — same as the other counted columns here.
+   */
+  caption_offset: number;
   created_at: string;
   updated_at: string;
 }

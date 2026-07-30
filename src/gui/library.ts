@@ -327,7 +327,7 @@ export function listLectures(): LibraryEntry[] {
       watched: row.watched === 1,
       resumeAt: row.resume_at,
       videoSeconds: row.video_seconds,
-      captionOffset: row.caption_offset ?? 0,
+      captionOffset: row.caption_offset,
       lectureDate: placement.date,
       dateSource: placement.dateSource,
       dateOverride: row.date_override,

@@ -2902,7 +2902,8 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
  */
 function followReel() {
   if (!reel.on) return;
-  const segments = reelSegments();
+  const saved = reelCurrent();
+  const segments = saved?.segments ?? [];
   const current = segments[reel.index];
   if (!current) return;
   if (toTranscript(videoEl.currentTime) < current.end) return;
@@ -2911,7 +2912,7 @@ function followReel() {
     // The end of the reel is the end of watching, not a jump back to the top.
     videoEl.pause();
     setReelOn(false, { silent: true });
-    toast(`That's the reel — ${clockText(reelPick().seconds)} of ${clockText(reel.payload.reel.lectureSeconds)}.`);
+    toast(`That's the reel — ${clockText(saved.seconds)} of ${clockText(saved.lectureSeconds)}.`);
     return;
   }
   setReelIndex(reel.index + 1);
@@ -2970,15 +2971,6 @@ const buildReel = guard(async (preset, steer = "") => {
   }
 });
 
-/**
- * One button, two jobs, and which one it is doing is the state it's in.
- *
- * With a reel it plays it. Without one it opens the panel rather than spending a
- * call on the spot: building is the expensive irreversible thing here, and a
- * button that starts it on first press gives you no moment to say how much of
- * the lecture you wanted. So the panel opens on Skim / Highlights / Deep with
- * Build beside them, and the press that costs money is the one labelled Build.
- */
 /**
  * The player bar's Highlights button: play the reel, or stop.
  *
