@@ -168,6 +168,16 @@ check("and only the last N of it", !window.includes("First line") && window.incl
 check("timestamps are attached", window.includes("[01:05]"));
 check("nothing spoken yet is an empty window", transcriptWindow(VTT, 5, 6) === "");
 
+// With a caption offset, the whole window moves into the recording's clock — the
+// one the notes and the player are in — at both ends. Asked for 70s with the
+// transcript running 60s behind the file, the cue spoken at 01:05 has not
+// happened yet; asked for 130s, it has, and it is labelled 02:05.
+check("an offset holds back a cue the file hasn't reached", !transcriptWindow(VTT, 70, 2, 60).includes("Second line"));
+const shifted = transcriptWindow(VTT, 130, 2, 60);
+check("and lets it through once it has", shifted.includes("Second line"));
+check("labelled in the recording's clock, not the transcript's", shifted.includes("[02:05]") && !shifted.includes("[01:05]"));
+check("no offset is exactly as before", transcriptWindow(VTT, 70, 2, 0) === window);
+
 // ── Report ───────────────────────────────────────────────────────────────────
 
 let bad = 0;

@@ -352,12 +352,28 @@ function clockText(seconds: number): string {
   return h > 0 ? `${h}:${rest}` : rest;
 }
 
-/** The last N cues that have already been spoken by `atSeconds`. */
-export function transcriptWindow(vtt: string, atSeconds: number, lines: number): string {
-  const cues = parseVtt(vtt).filter((c) => c.start <= atSeconds);
+/**
+ * The last N cues that have already been spoken by `atSeconds`.
+ *
+ * `atSeconds` is in the *recording's* clock, and so are the times this prints —
+ * which for a lecture Panopto trimmed at the front is not the clock its
+ * transcript is written in. `offsetSeconds` is the difference, and it is applied
+ * to both ends: it picks the right cues, and it labels them with times that
+ * match the notes in the same prompt and the clock the student is looking at.
+ *
+ * Everything Explain sends is in the recording's clock. Highlights is the other
+ * way round for a reason — see buildHighlights.
+ */
+export function transcriptWindow(
+  vtt: string,
+  atSeconds: number,
+  lines: number,
+  offsetSeconds = 0,
+): string {
+  const cues = parseVtt(vtt).filter((c) => c.start + offsetSeconds <= atSeconds);
   return cues
     .slice(-Math.max(1, lines))
-    .map((c) => `[${clockText(c.start)}] ${c.text}`)
+    .map((c) => `[${clockText(c.start + offsetSeconds)}] ${c.text}`)
     .join("\n");
 }
 
@@ -438,13 +454,14 @@ export function buildContext(key: string, atSeconds: number, wholeDocument = fal
       // No transcript cached. Nothing to add, and nothing to report — the answer
       // is still perfectly good from the notes alone.
     }
-    // The one place in here that isn't in the video's clock. `atSeconds` and the
-    // notes above are both file times; the cached transcript is Panopto's own,
-    // which on a recording trimmed at the front starts later than the file does.
-    // Ask it for the wrong minute and the model is handed notes about one thing
-    // and speech about another — see the player's caption offset.
+    // The cached transcript is Panopto's own, cut to a recording they trimmed at
+    // the front while the download kept it, so its clock can start minutes after
+    // the file's. Handed over as-is, the model gets notes about one moment and
+    // speech from another, and labels its answer with times the student cannot
+    // find. The offset moves both, so this whole prompt is in one clock: the
+    // recording's, which is the one on screen.
     const window = vtt
-      ? transcriptWindow(vtt, atSeconds - (entry.captionOffset ?? 0), cfg.subtitleLines)
+      ? transcriptWindow(vtt, atSeconds, cfg.subtitleLines, entry.captionOffset ?? 0)
       : "";
     if (window) {
       body += section("What the lecturer was actually saying, leading up to this moment", window);
