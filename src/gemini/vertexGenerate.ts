@@ -27,6 +27,43 @@ export class TruncatedResponseError extends Error {
   }
 }
 
+/**
+ * Google is rate-limiting this project.
+ *
+ * Recognised here rather than left to reach the surface as an SDK error, because
+ * what the SDK throws is a JSON document with a URL in it, and the panel puts a
+ * failure's `message` straight into a toast. This one is worth naming: nothing
+ * is broken, nothing needs fixing, and the answer is to wait — which the raw
+ * blob does say, in its third field, after two words of Latin.
+ */
+export class RateLimitedError extends Error {
+  /**
+   * Carries the status rather than declaring `retryable`, deliberately.
+   *
+   * classifyError() trusts a declared verdict and short-circuits — reporting
+   * `rateLimited: false` as it does so, which is what picks the *short* backoff.
+   * A 429 is exactly the case that wants the long one, so this leaves the
+   * classification to the code that already knows: status 429 in, long backoff
+   * out, unchanged from before this error existed.
+   */
+  readonly status = 429;
+  constructor() {
+    super(
+      "Google is rate-limiting this project at the moment (429). Nothing is wrong with the "
+      + "request — wait a few minutes and try again.",
+    );
+    this.name = "RateLimitedError";
+  }
+}
+
+/** The SDK reports it as a status on the error, a code in the body, or both. */
+function isRateLimit(err: unknown): boolean {
+  const status = (err as { status?: unknown })?.status;
+  if (status === 429) return true;
+  const text = err instanceof Error ? err.message : String(err ?? "");
+  return /\b429\b/.test(text) || text.includes("RESOURCE_EXHAUSTED");
+}
+
 /** Config uses lowercase names; the SDK wants its ThinkingLevel enum. */
 export type ThinkingLevelName = "minimal" | "low" | "medium" | "high";
 
@@ -99,6 +136,9 @@ export async function generateChat(opts: ChatOptions): Promise<string> {
       ...(systemInstruction ? { systemInstruction } : {}),
       httpOptions: { timeout: timeoutMs ?? GENERATE_TIMEOUT_MS },
     },
+  }).catch((err: unknown) => {
+    if (isRateLimit(err)) throw new RateLimitedError();
+    throw err;
   });
 
   const finishReason = response.candidates?.[0]?.finishReason;
