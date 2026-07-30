@@ -637,13 +637,36 @@ export const DEFAULTS = {
      * a box holding 0.25 is a box someone will eventually type 25 into.
      */
     presets: {
-      /** A fast run through the whole lecture: many very short cuts. */
-      skim: { share: 12, minSeconds: 5, maxSeconds: 18, aimSeconds: 10 },
+      /**
+       * A fast run through the whole lecture: many very short cuts.
+       *
+       * 20% rather than the 12% this started at, because 12% and a fifty-cut
+       * floor cannot both be true — fifty cuts inside eleven per cent of a
+       * 44-minute lecture is six seconds each, which is shorter than a subtitle
+       * cue and far too short to say anything. The count is what was asked for,
+       * so the share moved to fit it.
+       */
+      skim: { share: 20, minSeconds: 6, maxSeconds: 16, aimSeconds: 10 },
       /** The middle, and the one the button is named after. */
       highlights: { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15 },
       /** Everything worth hearing, with room for each point to finish. */
       deep: { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25 },
     },
+    /**
+     * The number of cuts a reel is recommended to have, when share ÷ cut length
+     * would ask for fewer.
+     *
+     * A recommendation and not a quota: somewhat fewer or somewhat more is fine,
+     * and only a reel well short of it earns a second pass. What it rules out is
+     * the failure mode — share ÷ cut length came to around forty on a 45-minute
+     * lecture, and forty still watches like a summary. The number of times a reel
+     * cuts is what makes it a reel.
+     *
+     * When it binds, the cut length is derived back from it rather than left
+     * contradicting it — fifty cuts inside the same total means shorter ones —
+     * and clamped to each preset's own band so it can't turn Deep into Skim.
+     */
+    minSpans: 50,
     /**
      * How long a stretch of lecture may go unmentioned before it counts as a
      * hole, in seconds.

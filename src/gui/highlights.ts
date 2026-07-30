@@ -316,6 +316,13 @@ export function trim(
    */
   maxGapSeconds = 0,
   lectureSeconds = 0,
+  /**
+   * The fewest cuts to leave behind. The count is the thing being asked for, so
+   * trimming may not undo it: a reel that came back with 56 cuts and was cut to
+   * 45 to save ninety seconds has been made worse in the only dimension anyone
+   * asked about.
+   */
+  minKeep = 0,
 ): Segment[] {
   const total = (list: Segment[]) => list.reduce((sum, s) => sum + (s.end - s.start), 0);
   if (budgetSeconds <= 0 || total(segments) <= budgetSeconds) return segments;
@@ -335,6 +342,7 @@ export function trim(
 
   for (const { segment, index } of order) {
     if (running <= budgetSeconds) break;
+    if (segments.length - dropped.size <= minKeep) break;
     dropped.add(index);
     // Coverage outranks the budget. Put it back if losing it tears a hole in the
     // lecture, and go on to the next candidate instead.
@@ -502,7 +510,17 @@ export function clean(
     if (cfg.maxSeconds && end - start > cfg.maxSeconds) {
       const limit = start + cfg.maxSeconds;
       const cue = cues.find((c) => c.end >= limit);
-      end = cue ? Math.min(cue.end, end) : limit;
+      // The nearer boundary of the cue the limit lands in, not always its end.
+      // Rounding outwards every time overshot the ceiling by up to a whole cue —
+      // an auto-transcript's are six or seven seconds, which turned a 16-second
+      // skim cut into a 22-second one and made Skim and Highlights look alike.
+      // The cue's own start is a legitimate boundary too, as long as the span
+      // that remains is still a span.
+      const nearer = cue && cue.start > start && (limit - cue.start) < (cue.end - limit)
+        ? cue.start
+        : cue?.end;
+      const capped = nearer ?? limit;
+      end = Math.min(Math.max(capped, start + cfg.minSegmentSeconds), end);
     }
     if (end - start < cfg.minSegmentSeconds) continue;
 
@@ -541,9 +559,36 @@ export interface BuildRequest {
  * The span count is stated outright, not implied. "Cut often" is advice a model
  * can satisfy with twenty spans; "aim for about a hundred and thirty" is not.
  */
-function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string {
+/**
+ * How many cuts to ask for, and how long each should be.
+ *
+ * Share ÷ cut length gives a count, but on a shortish lecture that count comes
+ * out lower than a reel wants to be — forty cuts still reads as a summary, and
+ * the thing that makes a keynote recap feel like one is the sheer number of
+ * times it cuts. So the count has a floor, and when the floor is what binds, the
+ * cut length is derived back from it rather than left contradicting it: fifty
+ * cuts inside the same total simply means shorter ones.
+ *
+ * Clamped to the preset's own band, so a floor can't turn Deep into Skim. Where
+ * that clamp bites the reel runs over its share, which is allowed — the share is
+ * a soft ceiling and the cut count is the thing being asked for.
+ *
+ * Shared with the check that decides whether to ask for a second pass, so the
+ * two can't drift apart and complain about a number nobody was told.
+ */
+export function plan(cfg: Preset, lectureSeconds: number, minSpans: number): {
+  target: number;
+  spans: number;
+  aimSeconds: number;
+} {
   const target = lectureSeconds * (cfg.share / 100);
-  const spans = Math.round(target / cfg.aimSeconds);
+  const spans = Math.max(minSpans, Math.round(target / cfg.aimSeconds));
+  const aimSeconds = Math.max(cfg.minSeconds, Math.min(cfg.maxSeconds, Math.round(target / spans)));
+  return { target, spans, aimSeconds };
+}
+
+function brief(preset: PresetName, cfg: Preset, lectureSeconds: number, minSpans: number): string {
+  const { target, spans, aimSeconds } = plan(cfg, lectureSeconds, minSpans);
   const minutes = Math.max(1, Math.round(lectureSeconds / 60));
 
   const character: Record<PresetName, string> = {
@@ -566,15 +611,16 @@ function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string 
     "",
     character[preset],
     "",
-    `- About ${spans} spans. This is the number that matters most — it is what makes this a reel`,
-    `  rather than a summary, and it is the one thing most often got wrong.`,
+    `- Around ${spans} spans. Somewhat fewer or somewhat more is fine — what matters is that it is`,
+    `  that sort of number rather than a dozen, because the number of times a reel cuts is what`,
+    `  makes it a reel rather than a summary. If in doubt, err towards more.`,
     `- Each span ${cfg.minSeconds} to ${cfg.maxSeconds} seconds, and they must AVERAGE about`,
-    `  ${cfg.aimSeconds} seconds. Not "mostly under the maximum" — averaging ${cfg.aimSeconds}.`,
+    `  ${aimSeconds} seconds. Not "mostly under the maximum" — averaging ${aimSeconds}.`,
     `- So the whole reel runs about ${clockText(target)}: roughly ${cfg.share}% of this ${minutes}-minute lecture.`,
     "",
     "Before you answer, do this check. Count your spans, and work out their average length. If the",
-    `count is well under ${spans}, you have skipped material — go back through the transcript for it.`,
-    `If the average is over ${cfg.aimSeconds} seconds, you are keeping the run-up and the trailing-off`,
+    `count is well short of ${spans}, you have skipped material — go back through the transcript for it.`,
+    `If the average is over ${aimSeconds} seconds, you are keeping the run-up and the trailing-off`,
     "around each point: trim both ends, and where a span covers two separate claims, split it in two.",
     "",
     "Going over the total is worse than going under: spans past it are dropped weakest-first and you",
@@ -626,7 +672,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   let body =
     `Lecture: "${entry.title}" (${entry.courseCode}). ` +
     `The recording runs ${clockText(lectureSeconds)}.` +
-    section("The brief for this reel", brief(preset, presetCfg, lectureSeconds));
+    section("The brief for this reel", brief(preset, presetCfg, lectureSeconds, cfg.minSpans));
 
   if (overview.topics.length > 0 || overview.summary) {
     body += section(
@@ -650,7 +696,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // Last, and repeated from the top of the instruction: the length band and the
   // span count are the two things that decide whether this comes out a reel or a
   // table of contents, and the end of a long prompt is where attention is.
-  body += section("The brief, again", brief(preset, presetCfg, lectureSeconds));
+  body += section("The brief, again", brief(preset, presetCfg, lectureSeconds, cfg.minSpans));
 
   // Trimmed from the *end*, so a very long recording loses its last stretch
   // rather than its first. Losing the front would be worse: the opening of a
@@ -698,23 +744,29 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
    * Once, not until satisfied. Each pass costs a call, and a model that ignores
    * the note twice is not going to yield on the third.
    */
-  const wanted = Math.round((lectureSeconds * (presetCfg.share / 100)) / presetCfg.aimSeconds);
+  // The same arithmetic the brief was written from, so the note can't complain
+  // about a number the model was never given.
+  const { spans: wanted, aimSeconds } = plan(presetCfg, lectureSeconds, cfg.minSpans);
   const average = cleaned.length > 0
     ? cleaned.reduce((sum, s) => sum + (s.end - s.start), 0) / cleaned.length
     : 0;
   const holes = gaps(cleaned, lectureSeconds, cfg.maxGapSeconds);
+  // The count is a recommendation, so this has real slack in it: a reel that
+  // came back at 49 against 50, or 44, is the right sort of number and paying
+  // for a second pass over it would be a call for nothing. Twenty short of
+  // fifty is a different thing — that is a summary wearing a reel's name.
   const tooFew = cleaned.length < wanted * 0.75;
-  const tooLong = average > presetCfg.aimSeconds * 1.35;
+  const tooLong = average > aimSeconds * 1.35;
 
   if (cleaned.length > 0 && (tooFew || tooLong || holes.length > 0)) {
     log.info(
       `highlights: ${preset} came back ${cleaned.length} spans averaging ${Math.round(average)}s `
-      + `(wanted ~${wanted} at ~${presetCfg.aimSeconds}s), ${holes.length} uncovered stretch(es) `
+      + `(wanted ${wanted}+ at ~${aimSeconds}s), ${holes.length} uncovered stretch(es) `
       + "— asking for a second pass",
     );
     const note = [
       `That pass gave ${cleaned.length} spans averaging ${Math.round(average)} seconds.`,
-      `The brief asked for about ${wanted} spans averaging ${presetCfg.aimSeconds} seconds.`,
+      `The brief asked for around ${wanted} spans averaging ${aimSeconds} seconds.`,
       "",
       // The specific holes, by timestamp. Far more use than "cover the lecture":
       // it can go and read those minutes again rather than guess at where it was
@@ -773,6 +825,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
     lectureSeconds * (presetCfg.share / 100) * 1.5,
     cfg.maxGapSeconds,
     lectureSeconds,
+    wanted,
   );
   if (segments.length === 0) {
     throw new HighlightsUnavailableError(

@@ -13,7 +13,7 @@
  *   npm run test:highlights
  */
 
-import { clean, gaps, readJsonArray, trim, type Cue, type Segment } from "../src/gui/highlights.js";
+import { clean, gaps, plan, readJsonArray, trim, type Cue, type Segment } from "../src/gui/highlights.js";
 
 const checks: Array<[string, boolean]> = [];
 function check(name: string, ok: boolean): void {
@@ -129,14 +129,26 @@ check("a span is cut back to the preset's ceiling", (capped[0]?.end ?? 0) - (cap
 // cue happens to end here, so the ceiling and the boundary agree exactly.
 check("and the cut lands on a cue boundary", capped[0]?.end === 120);
 
-// Where they don't agree, the cue wins and the span runs a little over.
+// Where they don't agree, the nearer boundary of that cue wins. 100 + 18 = 118
+// sits in the cue running 115–120, and 120 is nearer than 115.
 const cappedOdd = clean(
   [{ start: 100, end: 400, weight: 5, why: "long" }],
   cues,
   1200,
   { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 18 },
 );
-check("a ceiling mid-cue rounds out to the cue's end", cappedOdd[0]?.end === 120);
+check("a ceiling mid-cue takes the nearer boundary", cappedOdd[0]?.end === 120);
+
+// And when the limit lands just inside a cue, it rounds back rather than out —
+// 100 + 17 = 117 is nearer 115 than 120, so the span ends early instead of over.
+const cappedBack = clean(
+  [{ start: 100, end: 400, weight: 5, why: "long" }],
+  cues,
+  1200,
+  { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 17 },
+);
+check("a ceiling just inside a cue rounds back to its start", cappedBack[0]?.end === 115);
+check("which keeps the span under the ceiling", (cappedBack[0]?.end ?? 0) - 100 <= 17);
 
 // ── trim: holding a reel to the time it was asked for ─────────────────────
 
@@ -158,6 +170,13 @@ check("what's left is still in time order", fitted.map((s) => s.start).join() ==
 const under = spans([[0, 30, 5], [100, 30, 4]]);
 check("a short reel is not padded", trim(under, 600).length === 2);
 check("and is returned untouched", total(trim(under, 600)) === 60);
+
+// The cut count is the thing being asked for, so trimming may not undo it: a
+// reel cut from 56 spans to 45 to save ninety seconds is worse in the only
+// dimension anyone measured.
+const many = spans(Array.from({ length: 20 }, (_, i) => [i * 100, 60, 3] as [number, number, number]));
+check("trimming stops at the floor", trim(many, 180, 0, 0, 15).length === 15);
+check("and still trims down to it", trim(many, 180, 0, 0, 5).length === 5);
 
 // Among equals, the longest goes first: dropping one 60-second span beats
 // dropping four 15-second ones, because the cut count is what makes a reel.
@@ -237,6 +256,28 @@ check(
 let unreadable = false;
 try { readJsonArray("I'm sorry, I can't do that."); } catch { unreadable = true; }
 check("and a reply with no list at all is an error", unreadable);
+
+// ── plan: how many cuts to ask for, and how long ──────────────────────────
+
+const hl = { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15 };
+
+// A 44-minute lecture: 25% is 11 minutes, which at 15s a cut is only 44 of them.
+const floored = plan(hl, 2632, 50);
+check("the floor lifts the count when the arithmetic falls short", floored.spans === 50);
+check("and the cut length is derived back from it", floored.aimSeconds === 13);
+check("so the total is unchanged", Math.abs(floored.spans * floored.aimSeconds - floored.target) < 60);
+
+// A 90-minute lecture already clears the floor on its own.
+const long = plan(hl, 5400, 50);
+check("a long lecture asks for more than the floor", long.spans === 90);
+check("and keeps its intended cut length", long.aimSeconds === 15);
+
+// The floor may not turn one preset into another: a Deep cut is clamped at its
+// own minimum even when the count would imply something shorter.
+const deep = { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25 };
+const shortLecture = plan(deep, 900, 50);
+check("the preset's own floor still binds", shortLecture.aimSeconds === 12);
+check("even though that overruns the share", shortLecture.spans * shortLecture.aimSeconds > shortLecture.target);
 
 let bad = 0;
 for (const [n, ok] of checks) {

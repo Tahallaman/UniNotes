@@ -695,17 +695,33 @@ built for none of them — what came back was five spans of two to four minutes
 each, which suited nothing. A skim and a deep pass are different editing jobs,
 not two lengths of the same one.
 
-Each preset is a **share** of the lecture and a **cut length**: 12% in 10-second
+Each preset is a **share** of the lecture and a **cut length**: 20% in 10-second
 cuts, 25% in 15s, 45% in 25s. The share adapts where a number of minutes cannot —
 ten minutes is most of a 25-minute lab and nothing of a two-hour lecture — and
 the cut length is what actually distinguishes the three, because share ÷ length
-is how many times the reel cuts. Both are stated to the model as an explicit span
-count, since "cut often" is advice a model can satisfy with twenty spans and
-"aim for about forty-four" is not.
+is how many times the reel cuts. Both reach the model as an explicit span count,
+since "cut often" is advice a model can satisfy with twenty spans and "around
+fifty" is not.
 
-The share is a soft ceiling, not a quota. It is enforced at 1.5× and coverage
-outranks it: a lecture with more in it than usual should give a longer reel, not
-a thinner one, and a percentage is never worth a hole in the story.
+**Fifty is what the count is held up against** when share ÷ cut length would ask
+for fewer. Forty cuts still watches like a summary; what makes a keynote recap
+feel like one is the sheer number of times it cuts. It is a recommendation rather
+than a quota — somewhat fewer or somewhat more is fine, and only a reel well
+short of it earns a second pass — but where it binds, the cut length is derived
+back from it rather than left contradicting it, clamped to the preset's own band
+so it can't turn Deep into Skim.
+
+The share is a soft ceiling, not a quota. It is enforced at 1.5×, and both
+coverage and the cut count outrank it: a lecture with more in it than usual
+should give a longer reel rather than a thinner one, a percentage is never worth
+a hole in the story, and trimming may not undo the count that was asked for.
+
+One consequence worth knowing. Fifty cuts of a length anyone can follow is
+thirteen to twenty-five minutes whatever the share says, so on the 44-minute
+lecture these were tuned against the three came out at 14, 20 and 25 minutes.
+They differ by the *character* of the cut — 53 terse statements, 50 fuller ones,
+45 with room to finish a thought — more than by how long they run. A genuinely
+short Skim would mean fewer cuts for that preset, not shorter ones.
 
 **The reel is saved beside the notes**, as `highlights.json` in the lecture's own
 folder. That is load-bearing rather than an optimisation: the transcript it was

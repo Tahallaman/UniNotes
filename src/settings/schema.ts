@@ -549,6 +549,16 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     help: "Enforced after the model answers, at the next subtitle boundary.",
   },
   {
+    path: "highlights.minSpans",
+    label: "Cuts to aim for",
+    group: "Highlights",
+    type: "int",
+    min: 1,
+    max: 400,
+    dependsOn: "highlights.enabled",
+    help: "A recommendation, used when share ÷ cut length would ask for fewer. Raising it makes reels cut more often and each cut shorter. Only a reel well short of it gets a second pass.",
+  },
+  {
     path: "highlights.maxGapSeconds",
     label: "Longest uncovered stretch (seconds)",
     group: "Highlights",
