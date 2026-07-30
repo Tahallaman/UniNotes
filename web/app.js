@@ -2972,15 +2972,6 @@ const buildReel = guard(async (preset, steer = "") => {
 });
 
 /**
- * One button, two jobs, and which one it is doing is the state it's in.
- *
- * With a reel it plays it. Without one it opens the panel rather than spending a
- * call on the spot: building is the expensive irreversible thing here, and a
- * button that starts it on first press gives you no moment to say how much of
- * the lecture you wanted. So the panel opens on Skim / Highlights / Deep with
- * Build beside them, and the press that costs money is the one labelled Build.
- */
-/**
  * The player bar's Highlights button: play the reel, or stop.
  *
  * The panel is the button beside it, so this one has a single job. With nothing

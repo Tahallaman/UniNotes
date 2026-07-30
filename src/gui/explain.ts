@@ -461,7 +461,7 @@ export function buildContext(key: string, atSeconds: number, wholeDocument = fal
     // find. The offset moves both, so this whole prompt is in one clock: the
     // recording's, which is the one on screen.
     const window = vtt
-      ? transcriptWindow(vtt, atSeconds, cfg.subtitleLines, entry.captionOffset ?? 0)
+      ? transcriptWindow(vtt, atSeconds, cfg.subtitleLines, entry.captionOffset)
       : "";
     if (window) {
       body += section("What the lecturer was actually saying, leading up to this moment", window);

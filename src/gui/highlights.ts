@@ -54,7 +54,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { generateChat } from "../gemini/vertexGenerate.js";
 import { vertexLimit, resolveProjectOrEmpty } from "../gemini/vertexClient.js";
-import { captionsPath, parseVtt } from "../panopto/captions.js";
+import { captionsPath, parseVtt, type Cue } from "../panopto/captions.js";
 import { listLectures, readNotes } from "./library.js";
 import { readOverview } from "./explain.js";
 import { effectiveConfig } from "./effective.js";
@@ -157,10 +157,40 @@ function readTime(value: unknown): number | null {
   return Number.isFinite(plain) && plain >= 0 ? plain : null;
 }
 
+/**
+ * The two clocks, named — because the direction is the thing that goes wrong.
+ *
+ * A lecture Panopto trimmed at the front has a transcript whose clock runs
+ * `offsetSeconds` behind the recording you can download. Which of the two any
+ * given number is in is decided by where it came from, and buildHighlights says
+ * which side each one sits on; these only carry it across.
+ *
+ * Named rather than written out as `+ offset` at each site for the reason the
+ * player names the same pair: the bug this feature was built around was a
+ * conversion applied in the wrong direction, and a sign is far easier to get
+ * wrong six times than once. The client's equivalents are toVideo/toTranscript
+ * in web/app.js.
+ */
+function toRecording(transcriptSeconds: number, offsetSeconds: number): number {
+  return transcriptSeconds + offsetSeconds;
+}
+
+/** Clamped at zero: a recording time before the transcript starts isn't in it. */
+function toTranscript(recordingSeconds: number, offsetSeconds: number): number {
+  return Math.max(0, recordingSeconds - offsetSeconds);
+}
+
 // ── What gets sent ───────────────────────────────────────────────────────────
 
-/** One subtitle cue — structurally what src/panopto/captions.ts parses. */
-export interface Cue { start: number; end: number; text: string }
+/**
+ * One subtitle cue — the same type `parseVtt` returns, not a copy of it.
+ *
+ * Re-exported rather than restated so a caller building cues for this module
+ * needn't reach past it, and so the two can't drift: a second hand-written copy
+ * of a three-field interface is structurally identical right up until one of
+ * them grows a field, at which point nothing complains.
+ */
+export type { Cue };
 
 /** One turn of the exchange with the model. Two of them, at most. */
 interface Turn { role: "user" | "model"; text: string }
@@ -184,7 +214,9 @@ export function blocks(cues: Cue[], seconds: number, offsetSeconds = 0): string 
   // front is not the one these cues are written in. The notes in the same prompt
   // are in the recording's, so this is the side that moves — see buildHighlights.
   const flush = () => {
-    if (start >= 0 && text.length > 0) out.push(`[${clockText(start + offsetSeconds)}] ${text.join(" ")}`);
+    if (start >= 0 && text.length > 0) {
+      out.push(`[${clockText(toRecording(start, offsetSeconds))}] ${text.join(" ")}`);
+    }
     start = -1;
     text = [];
   };
@@ -344,6 +376,9 @@ export function trim(
   const dropped = new Set<number>();
   const kept = () => segments.filter((_, index) => !dropped.has(index));
   let running = total(segments);
+  // The reel as it arrived, measured once: it is what every candidate is judged
+  // against, and it does not change as spans come out.
+  const holesBefore = maxGapSeconds > 0 ? gaps(segments, lectureSeconds, maxGapSeconds).length : 0;
 
   for (const { segment, index } of order) {
     if (running <= budgetSeconds) break;
@@ -351,8 +386,7 @@ export function trim(
     dropped.add(index);
     // Coverage outranks the budget. Put it back if losing it tears a hole in the
     // lecture, and go on to the next candidate instead.
-    if (maxGapSeconds > 0 && gaps(kept(), lectureSeconds, maxGapSeconds).length
-        > gaps(segments, lectureSeconds, maxGapSeconds).length) {
+    if (maxGapSeconds > 0 && gaps(kept(), lectureSeconds, maxGapSeconds).length > holesBefore) {
       dropped.delete(index);
       continue;
     }
@@ -696,7 +730,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
    * the right place, where a stored file time would be seven seconds wrong for
    * good, with nothing on screen to say so.
    */
-  const offset = entry.captionOffset ?? 0;
+  const offset = entry.captionOffset;
 
   const notes = readNotes(key, "raw") ?? readNotes(key, "pretty");
   const overview = readOverview(notes?.content ?? "");
@@ -704,7 +738,8 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   let body =
     `Lecture: "${entry.title}" (${entry.courseCode}). ` +
     (offset
-      ? `The speech runs from ${clockText(offset)} to ${clockText(lectureSeconds + offset)}, `
+      ? `The speech runs from ${clockText(toRecording(0, offset))} `
+        + `to ${clockText(toRecording(lectureSeconds, offset))}, `
         + `${clockText(lectureSeconds)} of lecture.`
       : `The recording runs ${clockText(lectureSeconds)}.`) +
     section("The brief for this reel", brief(preset, presetCfg, lectureSeconds));
@@ -784,7 +819,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
       const r = row as Record<string, unknown>;
       const back = (v: unknown): unknown => {
         const at = readTime(v);
-        return at === null ? v : clockText(Math.max(0, at - offset));
+        return at === null ? v : clockText(toTranscript(at, offset));
       };
       return { ...r, start: back(r.start), end: back(r.end) };
     });
@@ -840,7 +875,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
       holes.length > 0
         ? "These stretches have nothing in them at all:\n"
           + holes.map(([from, to]) =>
-            `  - ${clockText(from + offset)} to ${clockText(to + offset)} `
+            `  - ${clockText(toRecording(from, offset))} to ${clockText(toRecording(to, offset))} `
             + `(${Math.round((to - from) / 60)} minutes)`).join("\n")
           + "\n\nGo back to the transcript for each one and read what is actually said there. If it is "
           + "admin, a break or a tangent, leave it out and say nothing. If there is a definition, a "
