@@ -307,7 +307,7 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
 .grid tbody tr:hover { background: var(--sunken); }
 .grid tbody tr.picked { background: var(--sunken); box-shadow: inset 2px 0 0 var(--ink); }
 .c-check { width: 2rem; }
-.c-course, .c-status, .c-files, .c-video, .c-week, .c-watched, .c-when { width: 1%; white-space: nowrap; }
+.c-course, .c-status, .c-files, .c-video, .c-date, .c-week, .c-watched, .c-when { width: 1%; white-space: nowrap; }
 .c-watched { text-align: center; }
 .c-course, .c-when { font-family: var(--mono); font-size: var(--s-1); color: var(--muted); font-variant-numeric: tabular-nums; }
 .title-link {
@@ -349,6 +349,11 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
 .watched-box { cursor: pointer; }
 /* Nothing to tick, so it reads as absent rather than as unticked. */
 .watched-na { color: var(--faint); font-size: var(--s-1); cursor: help; }
+
+/* The same shape as the week beside it: both are quiet facts carrying a tooltip
+   that says where they came from. */
+.lecture-date { font-family: var(--mono); font-size: var(--s-1); cursor: help; }
+.lecture-date.none { color: var(--faint); font-style: italic; }
 
 .week { font-family: var(--mono); font-size: var(--s-1); cursor: help; }
 /* An unplaceable lecture is a prompt to fix something, not an error state. */

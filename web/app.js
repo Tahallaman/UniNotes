@@ -628,6 +628,19 @@ function renderLibrary() {
     tr.append(el("td", { class: "c-files" }, files));
     tr.append(el("td", { class: "c-video" }, videoControl(entry)));
 
+    // The date the list is now ordered by, so the order is legible rather than
+    // something you have to take on trust. Its source is in the tooltip: a date
+    // read off a title is a guess, and knowing which ones are guesses is what
+    // tells you where to look when a lecture is in the wrong place.
+    const shown = formatLectureDate(entry.lectureDate);
+    tr.append(el("td", { class: "c-date" }, el("span", {
+      class: shown ? "lecture-date" : "lecture-date none",
+      text: shown ?? "no date",
+      title: shown
+        ? `${entry.lectureDate} — from ${entry.dateSource}`
+        : "No date found. Open the lecture to set one.",
+    })));
+
     // The week, and enough of why to act on it being wrong: a lecture with no
     // date shows the gap rather than an empty cell you'd read as "week unknown,
     // nothing to be done about it".
@@ -3311,6 +3324,30 @@ function formatBytes(bytes) {
   let unit = 0;
   while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+/**
+ * "2026-07-28" → "Tue 28 Jul". Null if there isn't a date to show.
+ *
+ * Built from the parts rather than handed to `new Date(iso)`, which reads a bare
+ * date as UTC: west of Greenwich that renders as the day before, which on a
+ * Monday lecture is last week.
+ *
+ * The weekday earns its place — lectures recur on the same day, so "Tue" is how
+ * you recognise which of a course's two slots this one is. The year appears only
+ * when it isn't the current one, since a column of "2026" repeated forty times
+ * says nothing.
+ */
+function formatLectureDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? "");
+  if (!m) return null;
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
 }
 
 function formatWhen(iso, absolute = false) {

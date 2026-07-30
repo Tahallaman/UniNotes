@@ -158,10 +158,10 @@ progress.
 │ [search…            ]  Course ▾  Status ▾  ☐ Missing pretty only         │
 │  63 lectures · 58 complete · 3 error · 2 new                             │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ ☐ │ Lecture                     │ Course      │ Status   │ Notes  │Video│Wk│ ✓ │
-│ ☐ │ L04 – Te Tiriti o Waitangi  │ CAPSTONE750 │ complete │ raw prt │play │ 3│ ☑ │
-│ ☑ │ L01 – Computer Architecture │ COMPSYS 730 │ complete │ raw ·   │fetch│ 1│ ☐ │
-│ ☐ │ Meeting week 8              │ SOFTENG 700 │ error    │ · ·     │  —  │ —│ ☐ │
+│ ☐ │ Lecture                     │ Course      │ Status   │ Notes  │Video│ Date  │Wk│ ✓ │
+│ ☐ │ L04 – Te Tiriti o Waitangi  │ CAPSTONE750 │ complete │ raw prt │play │Tue 4 Aug│ 3│ ☑ │
+│ ☑ │ L01 – Computer Architecture │ COMPSYS 730 │ complete │ raw ·   │fetch│Mon 20 Jul│ 1│ ⊟ │
+│ ☐ │ Meeting week 8              │ SOFTENG 700 │ error    │ · ·     │  —  │no date│ —│ ☐ │
 │   │   ↳ MAX_TOKENS on part 3/6                                           │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ 2 selected:  [ Process ] [ Prettify ] [ Reset to retry ] [ Ignore ]       │
@@ -181,6 +181,24 @@ them there is no highlight, nothing to click to seek by, and a gigabyte of
 download buys you a video in a panel, which the Panopto link already gives you.
 The rule is enforced in `scripts/fetch-video.ts` as well as in the cell, since
 that script takes ids from a file.
+
+**Date, and the list is ordered by it** — most recent lecture first, which is the
+order a semester is actually lived in: the one you are behind on is at the top.
+It used to sort by `updated_at`, which meant processing a month-old recording
+threw it above this morning's, so the list reordered itself around whatever the
+pipeline had last done rather than around the course. Dateless lectures go last
+rather than being guessed into the middle, matching how export numbering treats
+one, and ISO dates compare correctly as strings so the sort needs no parsing.
+Updated is still a column; it is just no longer the spine of the list.
+
+The cell shows the weekday, because lectures recur on the same day and "Tue" is
+how you tell which of a course's two slots this one is. The year appears only
+when it isn't the current one — a column of "2026" repeated forty times says
+nothing. Its tooltip names the source, since a date read off a title is a guess
+and knowing which are guesses is what tells you where to look when a lecture is
+filed wrongly. The date is built from its parts rather than `new Date(iso)`,
+which reads a bare date as UTC: west of Greenwich that renders as the day before,
+which on a Monday lecture is last week.
 
 The last column is a **Watched** tick. It is stored on the lecture row and is the
 one thing in the library the pipeline never writes — so it does not bump

@@ -383,7 +383,24 @@ export function listLectures(): LibraryEntry[] {
     });
   }
 
-  entries.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  // Most recent lecture first, which is the order a semester is actually lived
+  // in — the one you are behind on is at the top. Sorted by when the lecture was
+  // given rather than by when the tool last touched it: processing a month-old
+  // recording used to throw it above this morning's, so the list reordered
+  // itself around whatever the pipeline had just done rather than around the
+  // course. ISO dates compare correctly as strings, so no parsing is needed.
+  //
+  // A lecture with no date goes last rather than being guessed into the middle,
+  // matching how export numbering treats one. Ties, and the dateless among
+  // themselves, fall back to what the list used to be sorted by.
+  entries.sort((a, b) => {
+    if (a.lectureDate !== b.lectureDate) {
+      if (!a.lectureDate) return 1;
+      if (!b.lectureDate) return -1;
+      return b.lectureDate.localeCompare(a.lectureDate);
+    }
+    return (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+  });
   return entries;
 }
 
