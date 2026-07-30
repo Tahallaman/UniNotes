@@ -1,17 +1,31 @@
 /**
  * Highlights — the lecture cut down to the parts worth watching.
  *
- * ## The shape of it
+ * ## Three reels, three calls
  *
- * One model call reads the transcript and the raw notes and returns *every* span
- * worth watching, each scored 1–5 for importance — typically two or three times
- * more material than anyone wants to watch. What you actually watch is then
- * chosen from those candidates by preset, here, with no model involved.
+ * Skim, Highlights and Deep are each built by their own request, for their own
+ * shape: many very short cuts, a middle, and many longer ones. Each is saved
+ * separately, so a lecture can have one, two or all three.
  *
- * That split is the whole design. The expensive judgement (what is worth
- * watching) is made once and saved; the cheap one (how long have I got) is made
- * as often as you like, instantly and offline. Skim, Highlights and Deep are the
- * same call read three ways.
+ * The first version did the opposite — one pass scored every span 1–5 and the
+ * three presets cut those candidates locally, which made switching free. It was
+ * the wrong trade. A reel built to be cut three ways is built for none of them,
+ * and what came back was a set of medium-length spans that suited the middle
+ * preset and neither end. A skim and a deep pass are different editing jobs, not
+ * two lengths of the same one. The price is that changing your mind costs a
+ * call, which is why the button opens the panel rather than building on press.
+ *
+ * The scores survive that change with a narrower job: if a reel comes back
+ * longer than it was asked for, the weakest spans are dropped until it fits.
+ *
+ * ## What decides what gets cut
+ *
+ * The notes and the transcript do different jobs, and the prompt says so. The
+ * notes were written from this recording and already name what mattered in it;
+ * they are the list of things to look for. The transcript is where each of those
+ * things was said, and the only source of times. Working from our own notes
+ * rather than from the model's idea of the subject is the same anti-invention
+ * principle the notes prompts are built on.
  *
  * ## Why the file is written beside the notes
  *
@@ -51,36 +65,49 @@ export interface Segment {
   /** Seconds, snapped to a cue boundary. */
   start: number;
   end: number;
-  /** 1–5, the model's own ranking. What the presets cut by. */
+  /** 1–5, the model's own ranking. Only used to trim an over-long reel. */
   weight: number;
   /** One line saying what happens in it. */
   why: string;
 }
 
+export type PresetName = "skim" | "highlights" | "deep";
+
+/** How long one reel's spans should be, and how much they should add up to. */
+export interface Preset {
+  /** Target run time, as a percentage of the lecture. */
+  share: number;
+  minSeconds: number;
+  maxSeconds: number;
+  /** The middle of the band the model is asked to aim for. */
+  aimSeconds: number;
+}
+
 export interface Reel {
+  preset: PresetName;
   /** ISO date the call was made. Shown in the panel, so a stale reel is visible. */
   madeAt: string;
   model: string;
   /** The extra instruction it was built with, if any. Empty for a plain build. */
   steer: string;
-  /** The recording's length in seconds — what the preset shares are shares of. */
+  /** The recording's spoken length in seconds — what `share` is a share of. */
   lectureSeconds: number;
-  /** Every candidate, in time order. The presets choose from these. */
+  /** The reel itself, in time order. */
   segments: Segment[];
-}
-
-export type PresetName = "skim" | "highlights" | "deep";
-
-export interface Pick {
-  /** Total run time of the chosen spans, in seconds. */
+  /** Total run time of those spans, so the panel needn't add them up. */
   seconds: number;
-  segments: Segment[];
 }
 
 export interface ReelPayload {
-  reel: Reel | null;
-  picks: Record<PresetName, Pick>;
-  /** Why there is no reel and no way to build one, or "" when there is. */
+  /** One per preset, null until that one has been built. */
+  reels: Record<PresetName, Reel | null>;
+  /**
+   * What each preset means, so the panel can describe the three buttons before
+   * any of them exist. Without this they are three words with nothing to
+   * distinguish them until after you have paid for a build.
+   */
+  presets: Record<PresetName, Preset>;
+  /** Why no reel can be built, or "" when one can. */
   unavailable: string;
 }
 
@@ -93,7 +120,8 @@ export class HighlightsUnavailableError extends Error {
 }
 
 const FILENAME = "highlights.json";
-const MAX_SEGMENTS = 80;
+/** A reel cuts often — an hour can legitimately be fifty or sixty spans. */
+const MAX_SEGMENTS = 250;
 const MAX_STEER_CHARS = 500;
 
 // ── Times ────────────────────────────────────────────────────────────────────
@@ -131,6 +159,9 @@ function readTime(value: unknown): number | null {
 
 /** One subtitle cue — structurally what src/panopto/captions.ts parses. */
 export interface Cue { start: number; end: number; text: string }
+
+/** One turn of the exchange with the model. Two of them, at most. */
+interface Turn { role: "user" | "model"; text: string }
 
 /**
  * The transcript as timestamped paragraphs rather than as breath-length cues.
@@ -180,108 +211,153 @@ function reelPath(key: string): string | null {
   return entry?.lectureDir ? path.join(entry.lectureDir, FILENAME) : null;
 }
 
-export function readReel(key: string): Reel | null {
+const PRESET_NAMES: readonly PresetName[] = ["skim", "highlights", "deep"];
+
+const NO_REELS: Record<PresetName, Reel | null> = { skim: null, highlights: null, deep: null };
+
+/**
+ * Every reel saved for a lecture — one file holding up to three.
+ *
+ * One file rather than three, because they are one thing about one lecture and
+ * a folder with `highlights.skim.json` beside `highlights.deep.json` invites
+ * you to wonder which is authoritative. A shape it doesn't recognise reads as
+ * nothing at all, which is also what the first version's single-reel file does:
+ * that one was cut three ways at read time and can't be reconstructed as three
+ * reels, so it is quietly superseded by the next build rather than migrated.
+ */
+export function readReels(key: string): Record<PresetName, Reel | null> {
   const file = reelPath(key);
-  if (!file) return null;
+  if (!file) return { ...NO_REELS };
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<Reel>;
-    if (!Array.isArray(parsed.segments)) return null;
-    return {
-      madeAt: String(parsed.madeAt ?? ""),
-      model: String(parsed.model ?? ""),
-      steer: String(parsed.steer ?? ""),
-      lectureSeconds: Number(parsed.lectureSeconds) || 0,
-      segments: parsed.segments as Segment[],
-    };
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as { reels?: unknown };
+    const saved = (parsed.reels ?? {}) as Record<string, unknown>;
+    const reels = { ...NO_REELS };
+    for (const name of PRESET_NAMES) {
+      const reel = saved[name] as Partial<Reel> | undefined;
+      if (!reel || !Array.isArray(reel.segments) || reel.segments.length === 0) continue;
+      reels[name] = {
+        preset: name,
+        madeAt: String(reel.madeAt ?? ""),
+        model: String(reel.model ?? ""),
+        steer: String(reel.steer ?? ""),
+        lectureSeconds: Number(reel.lectureSeconds) || 0,
+        segments: reel.segments as Segment[],
+        seconds: Number(reel.seconds) || 0,
+      };
+    }
+    return reels;
   } catch {
     // Missing is the ordinary case; corrupt is rare and equivalent — you press
-    // the button and get a new one.
-    return null;
+    // a preset and get a new one.
+    return { ...NO_REELS };
   }
 }
 
+/** Save one reel without disturbing the other two. */
 function writeReel(key: string, reel: Reel): void {
   const file = reelPath(key);
   if (!file) throw new HighlightsUnavailableError("This lecture has no folder to save highlights in.");
-  fs.writeFileSync(file, `${JSON.stringify(reel, null, 2)}\n`, "utf-8");
+  const reels = readReels(key);
+  reels[reel.preset] = reel;
+  fs.writeFileSync(file, `${JSON.stringify({ version: 2, reels }, null, 2)}\n`, "utf-8");
 }
 
-// ── Choosing what to watch ───────────────────────────────────────────────────
+// ── Keeping a reel to its size ───────────────────────────────────────────────
 
 /**
- * Cut the candidates down to one preset's worth.
+ * Drop the weakest spans until the reel fits the time it was asked for.
  *
- * Two rules, and the pairing is the point. The **share** is a ceiling on run
- * time, which adapts where a fixed number of minutes cannot — ten minutes is
- * most of a 25-minute lab and nothing of a two-hour lecture. The **floor** is
- * what stops a preset padding itself out to fill that ceiling.
+ * The model is told what to aim for and mostly obliges, so this usually does
+ * nothing — but "mostly" is not a property to hand a player. Overshooting is the
+ * failure that matters: a Skim that comes back at 30% of the lecture is not a
+ * skim, and the student finds out by watching it.
  *
- * So the share is never a quota: a lecture that was mostly admin yields a
- * two-minute Deep, because there were only two minutes' worth in it, and that is
- * the correct answer rather than a failure to find more.
- *
- * Best-fit rather than first-fit — a span that doesn't fit is skipped and the
- * next one considered, so one long segment near the budget can't lock out three
- * good short ones. Ties break towards the earlier span, so a reel is stable
- * between builds rather than reshuffling on equal scores.
+ * By weight ascending, so what goes is what the model itself rated lowest.
+ * Undershooting is left alone: a lecture with only five minutes worth keeping
+ * gives a five-minute reel, and padding it out to reach a percentage would be
+ * inventing value.
  */
-export function pick(
-  reel: Reel,
-  preset: PresetName,
-  // Widened from what config.ts infers, which is the literal 10/25/45 it was
-  // written with — a parameter typed that narrowly accepts only the defaults.
-  presets: Record<PresetName, { minWeight: number; share: number }> =
-    effectiveConfig().highlights.presets,
-): Pick {
-  const { minWeight, share } = presets[preset];
-  const budget = Math.max(0, reel.lectureSeconds * (share / 100));
+/**
+ * Stretches of the lecture the reel says nothing about.
+ *
+ * The measurement behind the second pass. "Cover the whole lecture" is advice a
+ * model can believe it has followed while leaving a six-minute hole where the
+ * willingness-to-pay methodology was; being handed the hole, by timestamp, is
+ * something it can act on — and the transcript for it is already in front of it.
+ *
+ * The head and tail of a recording are exempt: lectures open with arrival and
+ * admin and close with "any questions", and a reel that skips both is right.
+ */
+export function gaps(
+  segments: Segment[],
+  lectureSeconds: number,
+  maxGapSeconds: number,
+): Array<[number, number]> {
+  if (segments.length === 0 || maxGapSeconds <= 0) return [];
+  const found: Array<[number, number]> = [];
+  const edge = Math.min(120, lectureSeconds * 0.05);
 
-  const ranked = reel.segments
-    .filter((s) => s.weight >= minWeight)
-    .slice()
-    .sort((a, b) => (b.weight - a.weight) || (a.start - b.start));
-
-  const chosen: Segment[] = [];
-  let total = 0;
-  for (const segment of ranked) {
-    const length = segment.end - segment.start;
-    if (total + length > budget) continue;
-    chosen.push(segment);
-    total += length;
+  let cursor = edge;
+  for (const segment of segments) {
+    if (segment.start - cursor > maxGapSeconds) found.push([cursor, segment.start]);
+    cursor = Math.max(cursor, segment.end);
   }
-
-  chosen.sort((a, b) => a.start - b.start);
-  return { seconds: Math.round(total), segments: chosen };
+  if (lectureSeconds - edge - cursor > maxGapSeconds) found.push([cursor, lectureSeconds - edge]);
+  return found;
 }
 
-function payload(reel: Reel | null, unavailable = ""): ReelPayload {
-  const empty: Pick = { seconds: 0, segments: [] };
-  // Read once for all three, and from the *effective* config rather than this
-  // process's frozen CONFIG — see src/gui/effective.ts. Retuning a preset in
-  // Settings then changes what plays on the next press, not after a restart.
-  const presets = effectiveConfig().highlights.presets;
-  return {
-    reel,
-    picks: reel
-      ? {
-          skim: pick(reel, "skim", presets),
-          highlights: pick(reel, "highlights", presets),
-          deep: pick(reel, "deep", presets),
-        }
-      : { skim: empty, highlights: empty, deep: empty },
-    unavailable,
-  };
+export function trim(
+  segments: Segment[],
+  budgetSeconds: number,
+  /**
+   * How long a hole trimming may leave behind. A span whose removal would open
+   * a longer one is kept regardless of how weak it is — the reel has to remain a
+   * run through the whole lecture, and a percentage is not worth a hole.
+   */
+  maxGapSeconds = 0,
+  lectureSeconds = 0,
+): Segment[] {
+  const total = (list: Segment[]) => list.reduce((sum, s) => sum + (s.end - s.start), 0);
+  if (budgetSeconds <= 0 || total(segments) <= budgetSeconds) return segments;
+
+  // Weakest first, and among equals the longest — dropping one 60-second span
+  // beats dropping four 15-second ones, because the cut count is what makes a
+  // reel feel like a reel.
+  const order = segments
+    .map((segment, index) => ({ segment, index }))
+    .sort((a, b) =>
+      (a.segment.weight - b.segment.weight)
+      || ((b.segment.end - b.segment.start) - (a.segment.end - a.segment.start)));
+
+  const dropped = new Set<number>();
+  const kept = () => segments.filter((_, index) => !dropped.has(index));
+  let running = total(segments);
+
+  for (const { segment, index } of order) {
+    if (running <= budgetSeconds) break;
+    dropped.add(index);
+    // Coverage outranks the budget. Put it back if losing it tears a hole in the
+    // lecture, and go on to the next candidate instead.
+    if (maxGapSeconds > 0 && gaps(kept(), lectureSeconds, maxGapSeconds).length
+        > gaps(segments, lectureSeconds, maxGapSeconds).length) {
+      dropped.delete(index);
+      continue;
+    }
+    running -= segment.end - segment.start;
+  }
+  return kept();
 }
 
-/**
- * The saved reel for a lecture, already cut three ways.
- *
- * All three picks are computed here rather than on demand so that switching
- * preset in the panel is a local array swap: the rule lives in one place, and
- * the page never has to reimplement it to feel instant.
- */
+function payload(reels: Record<PresetName, Reel | null>, unavailable = ""): ReelPayload {
+  // From the *effective* config rather than this process's frozen CONFIG — see
+  // src/gui/effective.ts. Retuning a preset in Settings then changes what the
+  // next build asks for, rather than waiting for a restart.
+  return { reels, presets: effectiveConfig().highlights.presets, unavailable };
+}
+
+/** Whatever has been built for this lecture so far. Free — no model involved. */
 export function getHighlights(key: string): ReelPayload {
-  return payload(readReel(key), whyNot(key));
+  return payload(readReels(key), whyNot(key));
 }
 
 /** Why a reel can't be built for this lecture, or "" if it can. */
@@ -318,13 +394,41 @@ function hasTranscript(id: string): boolean {
  * is the ordinary failure and not worth a round trip to correct, so the first
  * bracketed array in the reply is taken instead.
  */
-function readJsonArray(reply: string): unknown[] {
+export function readJsonArray(reply: string): unknown[] {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(reply);
   const body = fenced ? fenced[1] : reply;
   const start = body.indexOf("[");
+  if (start === -1) throw new Error("The model didn't return a list of highlights.");
+
   const end = body.lastIndexOf("]");
-  if (start === -1 || end <= start) throw new Error("The model didn't return a list of highlights.");
-  return JSON.parse(body.slice(start, end + 1)) as unknown[];
+  if (end > start) {
+    try {
+      return JSON.parse(body.slice(start, end + 1)) as unknown[];
+    } catch {
+      // Fall through and salvage. A closing bracket that doesn't parse means
+      // damage somewhere in the middle, which the same repair handles.
+    }
+  }
+
+  /**
+   * Salvage a reel that was cut off mid-answer.
+   *
+   * The budget covers thinking as well as output, so a long lecture can run out
+   * of room part-way through the array and return forty perfectly good spans
+   * followed by half of a forty-first. Throwing that away means the whole build
+   * fails on a lecture that just had a lot in it — the exact case this feature
+   * exists for. Everything up to the last complete object is a valid reel; it is
+   * simply a shorter one, and the gap check will notice if the tail is missing.
+   */
+  const lastComplete = body.lastIndexOf("}");
+  if (lastComplete > start) {
+    try {
+      return JSON.parse(`${body.slice(start, lastComplete + 1)}]`) as unknown[];
+    } catch {
+      // Not repairable — fall through to the error below.
+    }
+  }
+  throw new Error("The model's list of highlights couldn't be read.");
 }
 
 /**
@@ -345,9 +449,10 @@ export function clean(
   raw: unknown[],
   cues: Cue[],
   lectureSeconds: number,
-  // Narrowed to what it actually reads, so a test can hand it two numbers
+  // Narrowed to what it actually reads, so a test can hand it three numbers
   // rather than a whole config.
-  cfg: { leadInSeconds: number; minSegmentSeconds: number } = effectiveConfig().highlights,
+  cfg: { leadInSeconds: number; minSegmentSeconds: number; maxSeconds?: number } =
+    effectiveConfig().highlights,
 ): Segment[] {
   const starts = cues.map((c) => c.start);
 
@@ -390,6 +495,15 @@ export function clean(
       start = Math.min(start, lectureSeconds);
       end = Math.min(end, lectureSeconds);
     }
+    // Held to this reel's own ceiling, and cut at a cue so it still ends on a
+    // finished sentence. A span that ran long was the failure that made these
+    // three separate builds in the first place; letting one through here would
+    // put it straight back.
+    if (cfg.maxSeconds && end - start > cfg.maxSeconds) {
+      const limit = start + cfg.maxSeconds;
+      const cue = cues.find((c) => c.end >= limit);
+      end = cue ? Math.min(cue.end, end) : limit;
+    }
     if (end - start < cfg.minSegmentSeconds) continue;
 
     segments.push({ start, end, weight, why });
@@ -411,8 +525,61 @@ export function clean(
 
 export interface BuildRequest {
   key?: unknown;
+  /** Which of the three to build. One request builds exactly one. */
+  preset?: unknown;
   /** An instruction for this build — "more on the derivations, skip the demo". */
   steer?: unknown;
+}
+
+/**
+ * The part of the prompt that differs between the three reels.
+ *
+ * Built here rather than left in the editable prompt file because it is
+ * arithmetic against this lecture's length and this preset's numbers — a
+ * settings textarea should not have to be kept in sync with a percentage.
+ *
+ * The span count is stated outright, not implied. "Cut often" is advice a model
+ * can satisfy with twenty spans; "aim for about a hundred and thirty" is not.
+ */
+function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string {
+  const target = lectureSeconds * (cfg.share / 100);
+  const spans = Math.round(target / cfg.aimSeconds);
+  const minutes = Math.max(1, Math.round(lectureSeconds / 60));
+
+  const character: Record<PresetName, string> = {
+    skim: "A fast pass. Very short cuts, one after another, so that watching it "
+      + "start to finish tells the whole story of the lecture in a fraction of "
+      + "the time. Favour the sentence that states a thing over the sentence "
+      + "that explains it — but keep the few short connectives that hold the "
+      + "argument together, or it plays as a list of facts.",
+    highlights: "The everyday reel. Short and medium cuts, enough of each point "
+      + "to land properly, and enough of them that nothing important is missing. "
+      + "This is the one someone watches instead of the lecture, so it has to "
+      + "stand on its own.",
+    deep: "The thorough pass. Still many cuts, but each has room to finish its "
+      + "thought — a worked example can keep the step that makes it make sense, "
+      + "and an argument can keep its objection as well as its conclusion.",
+  };
+
+  return [
+    `THE BRIEF FOR THIS REEL: ${preset.toUpperCase()}`,
+    "",
+    character[preset],
+    "",
+    `- About ${spans} spans. This is the number that matters most — it is what makes this a reel`,
+    `  rather than a summary, and it is the one thing most often got wrong.`,
+    `- Each span ${cfg.minSeconds} to ${cfg.maxSeconds} seconds, and they must AVERAGE about`,
+    `  ${cfg.aimSeconds} seconds. Not "mostly under the maximum" — averaging ${cfg.aimSeconds}.`,
+    `- So the whole reel runs about ${clockText(target)}: roughly ${cfg.share}% of this ${minutes}-minute lecture.`,
+    "",
+    "Before you answer, do this check. Count your spans, and work out their average length. If the",
+    `count is well under ${spans}, you have skipped material — go back through the transcript for it.`,
+    `If the average is over ${cfg.aimSeconds} seconds, you are keeping the run-up and the trailing-off`,
+    "around each point: trim both ends, and where a span covers two separate claims, split it in two.",
+    "",
+    "Going over the total is worse than going under: spans past it are dropped weakest-first and you",
+    "do not get to choose which. Getting the count right is how you keep what you meant to keep.",
+  ].join("\n");
 }
 
 /**
@@ -426,6 +593,8 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   const steer = typeof request.steer === "string"
     ? request.steer.trim().replace(/\s+/g, " ").slice(0, MAX_STEER_CHARS)
     : "";
+  const preset = PRESET_NAMES.find((p) => p === request.preset);
+  if (!preset) throw new HighlightsUnavailableError("Pick Skim, Highlights or Deep first.");
 
   const refusal = whyNot(key);
   if (refusal) throw new HighlightsUnavailableError(refusal);
@@ -435,26 +604,29 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // prompt or a model changed in Settings has to apply to the next press.
   const settings = effectiveConfig();
   const cfg = settings.highlights;
+  const presetCfg = cfg.presets[preset];
 
   const vtt = fs.readFileSync(captionsPath(entry.id!)!, "utf-8");
   const cues = parseVtt(vtt);
   if (cues.length === 0) throw new HighlightsUnavailableError("That transcript has no usable cues in it.");
 
-  // The video's own length when we know it, the transcript's when we don't. It
-  // is what the preset shares are shares of, so a wrong one skews every preset —
-  // and the last cue ending is a good floor even for a recording that runs on
-  // past the talking.
-  const lectureSeconds = Math.max(
-    Number(entry.videoSeconds) || 0,
-    cues[cues.length - 1].end,
-  );
+  // The *spoken* length, not the file's, and deliberately so.
+  //
+  // This is what the preset shares are shares of, and the two numbers differ by
+  // more than you would guess: the recording that prompted this runs 59:52 and
+  // the last thing anyone says is at 43:52, the rest being an empty room. Budget
+  // against the file and a quarter of the lecture silently becomes a third,
+  // spent on spans that can only come from the part where people were talking
+  // anyway.
+  const lectureSeconds = cues[cues.length - 1].end;
 
   const notes = readNotes(key, "raw") ?? readNotes(key, "pretty");
   const overview = readOverview(notes?.content ?? "");
 
   let body =
     `Lecture: "${entry.title}" (${entry.courseCode}). ` +
-    `The recording runs ${clockText(lectureSeconds)}.`;
+    `The recording runs ${clockText(lectureSeconds)}.` +
+    section("The brief for this reel", brief(preset, presetCfg, lectureSeconds));
 
   if (overview.topics.length > 0 || overview.summary) {
     body += section(
@@ -475,6 +647,10 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
     blocks(cues, cfg.blockSeconds),
   );
   if (steer) body += section("What this student has asked for in particular", steer);
+  // Last, and repeated from the top of the instruction: the length band and the
+  // span count are the two things that decide whether this comes out a reel or a
+  // table of contents, and the end of a long prompt is where attention is.
+  body += section("The brief, again", brief(preset, presetCfg, lectureSeconds));
 
   // Trimmed from the *end*, so a very long recording loses its last stretch
   // rather than its first. Losing the front would be worse: the opening of a
@@ -486,20 +662,118 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
 
   log.info(`highlights: ${entry.title} — ${body.length} chars, ${cues.length} cues`);
 
-  const reply = await vertexLimit(() =>
-    generateChat({
-      model: cfg.model,
-      contents: [{ role: "user", parts: [{ text: "Choose the highlights for this lecture." }] }],
-      systemInstruction: `${settings.prompts.highlights.trim()}\n\n# The lecture\n\n${body}`,
-      maxOutputTokens: cfg.maxOutputTokens,
-      thinkingLevel: cfg.thinkingLevel,
-      timeoutMs: cfg.timeoutSeconds * 1000,
-    }),
-  );
+  const instruction = `${settings.prompts.highlights.trim()}\n\n# The lecture\n\n${body}`;
+  const limits = {
+    leadInSeconds: cfg.leadInSeconds,
+    minSegmentSeconds: Math.max(cfg.minSegmentSeconds, presetCfg.minSeconds),
+    maxSeconds: presetCfg.maxSeconds,
+  };
+  const ask = (turns: Turn[]) =>
+    vertexLimit(() =>
+      generateChat({
+        model: cfg.model,
+        contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+        systemInstruction: instruction,
+        maxOutputTokens: cfg.maxOutputTokens,
+        thinkingLevel: cfg.thinkingLevel,
+        timeoutMs: cfg.timeoutSeconds * 1000,
+      }),
+    );
 
+  const opening = `Cut the ${preset} reel for this lecture.`;
+  let reply = await ask([{ role: "user", text: opening }]);
   if (!reply) throw new Error("The model returned nothing.");
+  let cleaned = clean(readJsonArray(reply), cues, lectureSeconds, limits);
 
-  const segments = clean(readJsonArray(reply), cues, lectureSeconds, cfg);
+  /**
+   * One editor's note, when the first cut came back too coarse.
+   *
+   * Every measurement so far says the same thing: asked for spans averaging
+   * fifteen seconds it returns twenty-nine, and asked for forty spans it returns
+   * twenty-two. Telling it so, with its own numbers, and letting it revise is
+   * both cheaper and more reliable than asking louder in the opening prompt —
+   * the second turn reuses the whole cached context and it can see what it
+   * actually did rather than what it intended.
+   *
+   * Once, not until satisfied. Each pass costs a call, and a model that ignores
+   * the note twice is not going to yield on the third.
+   */
+  const wanted = Math.round((lectureSeconds * (presetCfg.share / 100)) / presetCfg.aimSeconds);
+  const average = cleaned.length > 0
+    ? cleaned.reduce((sum, s) => sum + (s.end - s.start), 0) / cleaned.length
+    : 0;
+  const holes = gaps(cleaned, lectureSeconds, cfg.maxGapSeconds);
+  const tooFew = cleaned.length < wanted * 0.75;
+  const tooLong = average > presetCfg.aimSeconds * 1.35;
+
+  if (cleaned.length > 0 && (tooFew || tooLong || holes.length > 0)) {
+    log.info(
+      `highlights: ${preset} came back ${cleaned.length} spans averaging ${Math.round(average)}s `
+      + `(wanted ~${wanted} at ~${presetCfg.aimSeconds}s), ${holes.length} uncovered stretch(es) `
+      + "— asking for a second pass",
+    );
+    const note = [
+      `That pass gave ${cleaned.length} spans averaging ${Math.round(average)} seconds.`,
+      `The brief asked for about ${wanted} spans averaging ${presetCfg.aimSeconds} seconds.`,
+      "",
+      // The specific holes, by timestamp. Far more use than "cover the lecture":
+      // it can go and read those minutes again rather than guess at where it was
+      // thin, and the transcript it needs is already in the context above.
+      holes.length > 0
+        ? "These stretches have nothing in them at all:\n"
+          + holes.map(([from, to]) =>
+            `  - ${clockText(from)} to ${clockText(to)} (${Math.round((to - from) / 60)} minutes)`).join("\n")
+          + "\n\nGo back to the transcript for each one and read what is actually said there. If it is "
+          + "admin, a break or a tangent, leave it out and say nothing. If there is a definition, a "
+          + "figure, an example or an argument in it — and in a lecture there usually is — cut it."
+        : "",
+      tooLong
+        ? "Your spans are also too long. Cut the run-up and the trailing-off from each one — start on "
+          + "the words that carry the point, end when it is made. Where a span covers two separate "
+          + "claims, split it into two and drop whatever sits between them."
+        : "",
+      tooFew && holes.length === 0
+        ? "You have too few. Work through the transcript again from the start, in order, and find the "
+          + "moments you passed over — a lecture this long has more in it than you took."
+        : "",
+      "",
+      "Keep everything you already had that was good. Return the whole revised reel as JSON, in the "
+      + "same format. Not a diff, not a note — the full list.",
+    ].filter(Boolean).join("\n");
+
+    const second = await ask([
+      { role: "user", text: opening },
+      { role: "model", text: reply },
+      { role: "user", text: note },
+    ]);
+    if (second) {
+      const revised = clean(readJsonArray(second), cues, lectureSeconds, limits);
+      // Kept only if it actually improved on what was complained about: more
+      // cuts, or the same cuts covering more of the lecture. A revision that came
+      // back thinner is a worse reel, and having paid for it is no reason to use
+      // it.
+      const better = revised.length > cleaned.length
+        || gaps(revised, lectureSeconds, cfg.maxGapSeconds).length < holes.length;
+      if (better) {
+        cleaned = revised;
+        reply = second;
+      }
+    }
+  }
+
+  // A ceiling with room in it, not the target.
+  //
+  // The share says what a reel of this kind should be about; it is not a budget
+  // to be spent to the last second, and a lecture with more in it than usual
+  // should give a longer reel rather than a thinner one. This only bites when
+  // something has gone properly wrong — a "skim" running to half the lecture —
+  // and coverage outranks it either way.
+  const segments = trim(
+    cleaned,
+    lectureSeconds * (presetCfg.share / 100) * 1.5,
+    cfg.maxGapSeconds,
+    lectureSeconds,
+  );
   if (segments.length === 0) {
     throw new HighlightsUnavailableError(
       "Nothing came back that could be played — no usable spans in the reply. Worth trying again.",
@@ -507,14 +781,19 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   }
 
   const reel: Reel = {
+    preset,
     madeAt: new Date().toISOString(),
     model: cfg.model,
     steer,
     lectureSeconds,
     segments,
+    seconds: Math.round(segments.reduce((sum, s) => sum + (s.end - s.start), 0)),
   };
   writeReel(key, reel);
-  log.info(`highlights: ${segments.length} spans saved for ${entry.title}`);
+  log.info(
+    `highlights: ${preset} — ${segments.length} spans, ${clockText(reel.seconds)}`
+    + `${cleaned.length > segments.length ? ` (${cleaned.length - segments.length} trimmed to fit)` : ""}`,
+  );
 
-  return payload(reel);
+  return payload(readReels(key));
 }

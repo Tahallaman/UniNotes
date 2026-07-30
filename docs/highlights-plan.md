@@ -1,10 +1,36 @@
 # Lecture Highlights — a proposal
 
-*Status: built, and this is the record of why it looks like it does. The code is
+*Status: built, then substantially rebuilt once it could be watched. The code is
 `src/gui/highlights.ts`, `prompts/highlights.txt` and the Highlights section of
-`web/app.js`; `docs/gui-design.md` describes what it does now. Kept because the
-arguments here — the two-rule presets, why the reel is saved, why it is not a
-notes tab — are the ones that would otherwise be re-litigated from scratch.*
+`web/app.js`; **`docs/gui-design.md` describes what it actually does** and is the
+one to trust where the two disagree.*
+
+*Kept because the reasoning is worth having — but read the next section first,
+because the central idea below turned out to be wrong.*
+
+## What this plan got wrong
+
+The plan's best idea was one call scored 1–5 and cut three ways, so switching
+preset was free. Watching the result killed it. **A reel built to be cut three
+ways is built for none of them**: what came back was five spans of two to four
+minutes, which is a chaptering — it suited the middle preset badly and the two
+ends not at all. A skim and a deep pass are different editing jobs, not two
+lengths of the same one, so they are now one call each.
+
+Three more things only measurement could have told us:
+
+- **Length is the whole game, and "cut often" is not an instruction.** Told to
+  cut short, the model returned three-minute spans; told to average 15 seconds
+  and produce about 44 of them, it produced 26-second spans and 37 of them.
+  Stating the arithmetic — share ÷ cut length = span count — is what moved it.
+- **Coverage has to be measured, not asked for.** A reel can look excellent and
+  still have a six-minute hole where the willingness-to-pay methodology was.
+  Handing the model its own gaps by timestamp fixed in one pass what three
+  rounds of prompt-strengthening had not.
+- **The token budget covers thinking.** At level high the thinking alone ran to
+  31k of a 32k budget, so the answer came back truncated and the build failed
+  outright. Nothing in the plan anticipated that the cost of *deciding* would
+  crowd out the room to *answer*.
 
 ## What it is
 

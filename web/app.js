@@ -1748,7 +1748,6 @@ function teardownPlayer() {
   reel.key = null;
   reel.payload = null;
   reel.index = -1;
-  reelBar.hidden = true;
   dockTab("explain");
 
   // The conversation goes with the lecture. It only ever lived here, and it was
@@ -2456,6 +2455,7 @@ const reel = {
   on: false,
   /** Index into the current pick's segments, or -1. */
   index: -1,
+  /** The preset being cut right now, or false. Named so the panel can say which. */
   busy: false,
   /**
    * Where we last seeked to ourselves.
@@ -2469,15 +2469,19 @@ const reel = {
 };
 
 const dockEl = document.getElementById("explain-dock");
-const reelBar = document.getElementById("reel-bar");
 
-/** The pick being played, which is the empty one until a reel is loaded. */
-function reelPick() {
-  return reel.payload?.picks?.[reel.preset] ?? { seconds: 0, segments: [] };
+/** The reel being played, or null when this preset hasn't been built. */
+function reelCurrent() {
+  return reel.payload?.reels?.[reel.preset] ?? null;
 }
 
 function reelSegments() {
-  return reelPick().segments;
+  return reelCurrent()?.segments ?? [];
+}
+
+/** Has anything at all been built for this lecture? */
+function reelAny() {
+  return Object.values(reel.payload?.reels ?? {}).some(Boolean);
 }
 
 /**
@@ -2526,16 +2530,35 @@ async function loadReel(key) {
   }
   if (reel.key !== key) return;
   renderReel();
-  renderReelBar();
 }
 
-/** "9:40 of 51:12" — what this preset would actually cost you to watch. */
+/**
+ * The three buttons: what each one costs to watch, and whether it exists yet.
+ *
+ * Once built, a preset shows its real run time and switching to it is free.
+ * Before that it shows the share it aims for and a dot saying it hasn't been
+ * made — pressing it is what spends the call, which is why the state has to be
+ * legible before you press.
+ */
 function reelLengths() {
   for (const button of document.querySelectorAll(".reel-preset")) {
-    const pick = reel.payload?.picks?.[button.dataset.preset];
-    button.querySelector(".reel-len").textContent = pick ? clockText(pick.seconds) : "—";
-    button.setAttribute("aria-pressed", String(button.dataset.preset === reel.preset));
-    button.disabled = !reel.payload?.reel;
+    const name = button.dataset.reel;
+    const preset = reel.payload?.presets?.[name];
+    const built = reel.payload?.reels?.[name] ?? null;
+    button.querySelector(".reel-len").textContent = built
+      ? `${clockText(built.seconds)} · ${built.segments.length}`
+      : preset ? `build · ${preset.share}%` : "—";
+    button.setAttribute("aria-pressed", String(name === reel.preset));
+    button.classList.toggle("unbuilt", !built);
+    button.title = built
+      ? `${built.segments.length} spans, ${clockText(built.seconds)} — already built, free to switch to`
+      : preset
+        ? `Not built yet. One call, aiming for ${preset.share}% of the lecture in `
+          + `${preset.minSeconds}–${preset.maxSeconds} second cuts.`
+        : "";
+    // Boolean(), because `busy` holds the preset being built rather than a flag
+    // — the panel says which one it is cutting.
+    button.disabled = Boolean(reel.busy);
   }
 }
 
@@ -2543,47 +2566,45 @@ function renderReel() {
   reelLengths();
   const list = document.getElementById("reel-list");
   const form = document.getElementById("reel-form");
-  const saved = reel.payload?.reel ?? null;
+  const saved = reelCurrent();
 
   if (reel.busy) {
     list.replaceChildren(el("p", {
       class: "explain-idle",
-      text: "Reading the lecture… this takes a minute, and you can carry on watching.",
+      text: `Cutting the ${reel.busy} reel — a minute or so, and you can carry on watching.`,
     }));
     form.hidden = true;
     return;
   }
   form.hidden = dockEl.dataset.tab !== "highlights";
+  // Named, because with three reels "Rebuild" alone doesn't say which one it
+  // would throw away and spend a call replacing.
+  document.getElementById("reel-build").textContent = saved ? `Rebuild ${reel.preset}` : `Build ${reel.preset}`;
 
   if (!saved) {
     list.replaceChildren(el("p", {
       class: "explain-idle",
       text: reel.payload?.unavailable
-        || "No highlights for this lecture yet. Press Highlights to find the parts worth watching.",
+        || (reelAny()
+          ? `No ${reel.preset} reel yet. Press it again, or Build, to cut one — each of the three `
+            + "is its own pass, built for its own length."
+          : "Pick how much of the lecture you want and press it. Skim cuts many very short "
+            + "moments, Deep gives each point room to finish; each is one call, and once built "
+            + "it's saved and free to come back to."),
     }));
     return;
   }
 
-  // By start time, not by object identity: the picks arrive as their own copies
-  // of the same spans, so `chosen.has(segment)` on the objects would never be
-  // true. Starts are unique — the server drops overlaps — so they are a key.
-  const chosen = new Set(reelSegments().map((s) => s.start));
   const playingAt = reelSegments()[reel.index]?.start;
-
-  // Every candidate, not just the chosen ones — greying out what this preset
-  // dropped is how you tell whether Deep is worth reaching for. Ordered by time,
-  // because that is the only order a lecture has.
-  const nodes = saved.segments.slice().sort((a, b) => a.start - b.start).map((segment) => {
+  const nodes = saved.segments.map((segment) => {
     const item = el("button", { class: "reel-item", type: "button" });
-    if (!chosen.has(segment.start)) item.classList.add("out");
     if (segment.start === playingAt) item.classList.add("on");
     item.append(
       el("span", { class: "ts", text: clockText(segment.start) }),
       el("span", { class: "reel-text", text: segment.why }),
-      el("span", { class: "reel-weight", text: "•".repeat(segment.weight) }),
+      el("span", { class: "reel-weight", text: `${Math.round(segment.end - segment.start)}s` }),
     );
-    item.title = `${clockText(segment.start)}–${clockText(segment.end)} · scored ${segment.weight}/5`
-      + (chosen.has(segment.start) ? "" : " · not in this preset");
+    item.title = `${clockText(segment.start)}–${clockText(segment.end)} · scored ${segment.weight}/5`;
     item.addEventListener("click", () => playSegment(segment));
     return item;
   });
@@ -2591,37 +2612,12 @@ function renderReel() {
   const made = saved.madeAt ? new Date(saved.madeAt) : null;
   nodes.push(el("p", {
     class: "explain-sent",
-    text: `${saved.segments.length} spans, from ${saved.model}`
+    text: `${saved.segments.length} spans · ${clockText(saved.seconds)} of `
+      + `${clockText(saved.lectureSeconds)} · ${saved.model}`
       + (made && !Number.isNaN(made.getTime()) ? ` on ${made.toLocaleDateString()}` : "")
       + (saved.steer ? ` · asked for: ${saved.steer}` : ""),
   }));
   list.replaceChildren(...nodes);
-}
-
-/** The reel drawn against the whole lecture, to scale. */
-function renderReelBar() {
-  const saved = reel.payload?.reel ?? null;
-  const length = saved?.lectureSeconds ?? 0;
-  reelBar.hidden = !player.active || !saved || length <= 0;
-  if (reelBar.hidden) return;
-
-  const segments = reelSegments();
-  document.getElementById("reel-blocks").replaceChildren(...segments.map((segment, i) => {
-    const block = el("button", { class: "reel-block", type: "button" });
-    block.style.left = `${(segment.start / length) * 100}%`;
-    block.style.width = `${Math.max(0.4, ((segment.end - segment.start) / length) * 100)}%`;
-    if (i === reel.index) block.classList.add("on");
-    block.title = `${clockText(segment.start)} — ${segment.why}`;
-    block.addEventListener("click", () => playSegment(segment));
-    return block;
-  }));
-
-  const current = segments[reel.index];
-  document.getElementById("reel-why").textContent = reel.on && current
-    ? `${reel.index + 1} of ${segments.length} · ${current.why}`
-    : segments.length > 0
-      ? `${segments.length} spans · ${clockText(reelPick().seconds)} of ${clockText(length)}`
-      : "";
 }
 
 /** Our own seek, marked as ours so it isn't read as you taking over. */
@@ -2630,9 +2626,15 @@ function reelSeek(seconds) {
   videoEl.currentTime = seconds;
 }
 
+/**
+ * Move the "playing now" marker.
+ *
+ * The panel's list is the only place this shows, so it is only redrawn when the
+ * panel is actually on screen — this fires at every span boundary, and rebuilding
+ * a list nobody is looking at is work for nothing.
+ */
 function setReelIndex(index) {
   reel.index = index;
-  renderReelBar();
   if (dockEl.dataset.tab === "highlights" && !dockEl.hidden) renderReel();
 }
 
@@ -2675,7 +2677,7 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
 
   if (!on) {
     reel.index = -1;
-    renderReelBar();
+    if (dockEl.dataset.tab === "highlights" && !dockEl.hidden) renderReel();
     if (was && !silent) toast("Highlights off — playing the whole lecture again.");
     return;
   }
@@ -2746,26 +2748,25 @@ videoEl.addEventListener("seeking", () => {
  * the better part of a minute, and blocking the player for it would be absurd
  * when the thing you'd be blocking is a lecture you can watch meanwhile.
  */
-const buildReel = guard(async (steer = "") => {
+const buildReel = guard(async (preset, steer = "") => {
   if (reel.busy || !state.drawerKey) return;
   const key = state.drawerKey;
-  reel.busy = true;
+  reel.busy = preset;
+  reel.preset = preset;
   renderReel();
-  toast(steer
-    ? "Rebuilding the highlights with that in mind — carry on watching."
-    : "Reading the lecture for its highlights — this takes a minute. Carry on watching.");
+  toast(`Cutting the ${preset} reel — a minute or so. Carry on watching.`);
 
   try {
-    const payload = await post("/api/highlights/build", { key, steer });
+    const payload = await post("/api/highlights/build", { key, preset, steer });
     // The drawer may have moved on while it was thinking. The file is saved
     // either way, so the work isn't lost — it just isn't what's on screen.
     if (state.drawerKey !== key) return;
     reel.payload = payload;
     reel.index = -1;
-    toast(`Highlights ready — ${payload.reel.segments.length} spans found.`);
+    const built = payload.reels[preset];
+    toast(`${preset[0].toUpperCase()}${preset.slice(1)} ready — ${built.segments.length} cuts, ${clockText(built.seconds)}.`);
     explainOpen(true);
     dockTab("highlights");
-    renderReelBar();
   } finally {
     reel.busy = false;
     if (state.drawerKey === key) renderReel();
@@ -2775,14 +2776,18 @@ const buildReel = guard(async (steer = "") => {
 /**
  * One button, two jobs, and which one it is doing is the state it's in.
  *
- * Without a reel it builds one; with a reel it plays it. That is one press for
- * the thing you actually wanted in both cases, and the label says which.
+ * With a reel it plays it. Without one it opens the panel rather than spending a
+ * call on the spot: building is the expensive irreversible thing here, and a
+ * button that starts it on first press gives you no moment to say how much of
+ * the lecture you wanted. So the panel opens on Skim / Highlights / Deep with
+ * Build beside them, and the press that costs money is the one labelled Build.
  */
 document.getElementById("player-highlights").addEventListener("click", () => {
   if (reel.busy) return;
-  if (!reel.payload?.reel) {
+  if (!reelCurrent()) {
     if (reel.payload?.unavailable) { toast(reel.payload.unavailable, "bad"); return; }
-    buildReel("");
+    explainOpen(true);
+    dockTab("highlights");
     return;
   }
   setReelOn(!reel.on);
@@ -2791,26 +2796,43 @@ document.getElementById("player-highlights").addEventListener("click", () => {
   if (reel.on && !dockEl.hidden) dockTab("highlights");
 });
 
+/**
+ * The three buttons: switch to a reel, or cut one if it doesn't exist yet.
+ *
+ * Pressing a preset that has already been built is free and instant — it is a
+ * saved file. Pressing one that hasn't spends a call, on that preset alone. The
+ * button says which it is about to do before you press it.
+ */
 document.getElementById("reel-presets").addEventListener("click", (event) => {
   const button = event.target.closest(".reel-preset");
-  if (!button) return;
-  reel.preset = button.dataset.preset;
-  // Re-landed rather than left where it was: the span you were on may not be in
-  // this preset at all, and the index is a position in *this* list.
+  if (!button || reel.busy) return;
+  const preset = button.dataset.reel;
+
+  if (!reel.payload?.reels?.[preset]) {
+    if (reel.payload?.unavailable) { toast(reel.payload.unavailable, "bad"); return; }
+    buildReel(preset, document.getElementById("reel-input").value.trim());
+    document.getElementById("reel-input").value = "";
+    return;
+  }
+
+  reel.preset = preset;
+  // Re-landed rather than left where it was: this is a different set of spans,
+  // and the index is a position in *this* list.
   const t = videoEl.currentTime;
   const segments = reelSegments();
   const inside = segments.findIndex((s) => t >= s.start && t < s.end);
   reel.index = reel.on ? (inside >= 0 ? inside : Math.max(0, segments.findIndex((s) => s.start > t))) : -1;
   renderReel();
-  renderReelBar();
 });
 
+// Rebuilds whichever preset is selected, which is the only way to replace a reel
+// you already have — a preset button on its own never spends a second call.
 document.getElementById("reel-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const input = document.getElementById("reel-input");
   const steer = input.value.trim();
   input.value = "";
-  buildReel(steer);
+  buildReel(reel.preset, steer);
 });
 
 // ── The dock's height ────────────────────────────────────────────────────────
@@ -3541,7 +3563,10 @@ document.getElementById("sched-add").addEventListener("click", guard(async () =>
   toast("Scheduled run added.");
 }));
 
-document.querySelectorAll("[data-preset]").forEach((button) => {
+// Scoped to this tab. A bare [data-preset] once reached across the whole page
+// and bound the player's reel buttons too, so choosing Skim also tried to
+// schedule a pipeline run at "sk:im".
+document.querySelectorAll("#panel-schedule [data-preset]").forEach((button) => {
   button.addEventListener("click", guard(async () => {
     const preset = button.dataset.preset;
     const jobId = document.getElementById("sched-job").value || "pipeline";

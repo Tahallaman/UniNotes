@@ -682,21 +682,30 @@ transcript and the raw notes and returns *every* span worth watching, each score
 1–5; the player then plays those spans back to back and skips the rest. Nothing
 is re-encoded — a reel is a list of times.
 
-**The call is made once and read three ways.** The model is never asked for "ten
-minutes of lecture". It returns two or three times more material than anyone
-wants to watch, and the presets cut it locally: Skim takes only the 5s, up to 10%
-of the lecture; Highlights takes 4 and up, to 25%; Deep takes 3 and up, to 45%.
-Switching between them is instant, offline and free, because the expensive
-judgement — *what is worth watching* — is separated from the cheap one, *how long
-have I got*, and only the first ever goes to a model.
+**Three reels, three calls.** Skim, Highlights and Deep are each built by their
+own request, for their own shape — many very short cuts, a middle, and many
+longer ones — and saved separately, so a lecture can have one, two or all three.
+Pressing a preset that exists switches to it, free and instant; pressing one that
+doesn't spends a call on that preset alone.
 
-Two rules per preset, not one, and the pairing is the point. The **share** adapts
-where a number of minutes cannot: ten minutes is most of a 25-minute lab and
-nothing of a two-hour lecture. The **floor** stops a preset padding itself out to
-fill that share — a mostly-admin lecture yields a two-minute Deep, because there
-were only two minutes' worth in it, and that is the right answer rather than a
-failure to find more. The share is a ceiling, never a quota; nothing is ever
-included to reach it.
+It was built the other way first: one pass scored every span 1–5 and the three
+presets cut those candidates locally, which made switching free. That was the
+wrong trade, and the measurement showed it. A reel built to be cut three ways is
+built for none of them — what came back was five spans of two to four minutes
+each, which suited nothing. A skim and a deep pass are different editing jobs,
+not two lengths of the same one.
+
+Each preset is a **share** of the lecture and a **cut length**: 12% in 10-second
+cuts, 25% in 15s, 45% in 25s. The share adapts where a number of minutes cannot —
+ten minutes is most of a 25-minute lab and nothing of a two-hour lecture — and
+the cut length is what actually distinguishes the three, because share ÷ length
+is how many times the reel cuts. Both are stated to the model as an explicit span
+count, since "cut often" is advice a model can satisfy with twenty spans and
+"aim for about forty-four" is not.
+
+The share is a soft ceiling, not a quota. It is enforced at 1.5× and coverage
+outranks it: a lecture with more in it than usual should give a longer reel, not
+a thinner one, and a percentage is never worth a hole in the story.
 
 **The reel is saved beside the notes**, as `highlights.json` in the lecture's own
 folder. That is load-bearing rather than an optimisation: the transcript it was
@@ -704,18 +713,52 @@ built from lives in the video cache, which is emptied every time the panel start
 *and* stops, so an unsaved reel would die with the session that made it and cost
 another call the next morning.
 
-**Why the times can be trusted.** The model is only allowed to name times that
-appear in the transcript it was given, and every boundary it returns is snapped
-back to a real cue boundary in `src/gui/highlights.ts` — a start to the cue
-covering it, an end to the end of its cue. A model that invents 07:41 gets the
-cue that actually starts at 07:38, so a span cannot open mid-word. The transcript
-is sent as ten-second paragraphs rather than as breath-length cues, which costs
-nothing in precision for exactly this reason and turns a thousand fragments into
-something both cheaper and more readable. Everything else is validated too:
-inside the recording, longer than the floor, in order, non-overlapping — and an
-overlap keeps the stronger span rather than merging, because a merged span would
-carry a reason describing only half of itself. `scripts/test-highlights.ts` pins
-all of it, since every one of these failures is silent.
+**The notes decide, the transcript times.** The two inputs do different jobs and
+the prompt says so at the top. The notes were written from this recording and
+already name what mattered in it — they are the list of things to look for. The
+transcript is where each of those was said, and the only source of times. Working
+from our own notes rather than from the model's idea of the subject is the same
+anti-invention principle the notes prompts are built on.
+
+**Why the times can be trusted.** The model may only name times that appear in
+the transcript it was given, and every boundary is snapped back to a real cue in
+`src/gui/highlights.ts` — a start to the cue covering it, an end to the end of
+its cue. A model that invents 07:41 gets the cue that actually starts at 07:38,
+so a span cannot open mid-word. The transcript is sent as five-second paragraphs
+rather than as breath-length cues: the merge sets the finest boundary the model
+can name, so it has to stay well under the length of the spans being chosen.
+Everything else is validated too — inside the recording, within the preset's own
+ceiling, longer than the floor, in order, non-overlapping — and an overlap keeps
+the stronger span rather than merging, because a merged span would carry a reason
+describing only half of itself.
+
+**A second pass, when the first one was thin.** Three things are measured against
+the brief once the answer is cleaned: the span count, the average length, and —
+the one that matters most — whether any stretch of the lecture longer than three
+minutes goes unmentioned. If any of them is off, the model gets one editor's
+note, in the same conversation, carrying its own numbers and the *specific*
+timestamps it skipped. "Cover the whole lecture" is advice a model can believe it
+has followed while leaving a six-minute hole where the willingness-to-pay
+methodology was; "nothing between 20:37 and 26:57 — go and read it" is not. The
+revision is kept only if it has more cuts or fewer holes than what it replaced.
+Once, not until satisfied: each pass costs a call, and a model that ignores the
+note twice will not yield on the third.
+
+Measured on a 44-minute lecture, that pass took Skim from 16 cuts with five holes
+to 24 with none, and Deep from 31 to 49.
+
+**Two failures found by running it, not by reading it.** The token budget covers
+*thinking* as well as output, and at level high the thinking alone ran to 31k of a
+32k budget — so the JSON came back cut off mid-array and the build failed
+outright. The budget is now the model's maximum, and a truncated array is
+salvaged up to its last complete object rather than thrown away, because forty
+good spans followed by half of a forty-first is still forty good spans. Separately,
+the Schedule tab bound `document.querySelectorAll("[data-preset]")` across the
+whole page, so choosing Skim also tried to schedule a pipeline run at "sk:im";
+that selector is now scoped to its own tab and the reel buttons use `data-reel`.
+
+`scripts/test-highlights.ts` pins all of it, since every one of these failures is
+silent.
 
 **It lives in the dock, not in a notes tab.** A fourth notes tab was the first
 instinct and it is wrong: the notes pane is the one thing that has to stay
@@ -725,19 +768,22 @@ The two tabs answer different questions — Explain answers *what does this mean
 Highlights answers *where should I be looking* — and keep different things: the
 conversation is thrown away when the drawer closes, the reel is on disk.
 
-**One button, two jobs.** Without a reel, Highlights builds one; with a reel, it
-plays it. Building runs in the background with a line of toast, because thinking
-level high over a whole transcript is the better part of a minute and the thing
-it would block is a lecture you can watch meanwhile. It sits past the gap in the
-player bar, with Explain — that gap means "these send something to Google", and
-this sends the most of anything here.
+**The button never builds.** With a reel it plays it; without one it opens the
+panel and stops. Building is the expensive irreversible thing here, so the press
+that starts it is a named preset — Skim, Highlights or Deep — and not a generic
+button that picks for you. Each shows what it will cost before you press it: a
+run time and a cut count once built, a dashed border and its target share
+before. Building runs in the background with a line of toast, because thinking at
+level high over a whole transcript takes a minute or two and the thing it would
+block is a lecture you can watch meanwhile.
 
-The **reel bar** under the video draws the chosen spans against the whole
-lecture, to scale. Without it the reel is invisible magic and you cannot tell one
-that covered the lecture from one that quietly dropped the second half. Blocks
-seek; the strip showing through between them is what you are skipping. The list
-in the panel shows every candidate, including the ones this preset dropped, greyed
-— seeing what was left out is how you decide whether Deep is worth reaching for.
+Highlights sits past the gap in the player bar, with Explain — that gap means
+"these send something to Google", and this sends the most of anything here.
+
+A **reel bar** under the video, drawing the spans against the whole lecture, was
+built and then taken out: the panel's list already says which cuts exist and
+which one is playing, and a second view of the same thing under the video is
+furniture.
 
 **Taking over, and what counts as taking over.** Playback advances when a span
 *ends*. A seek that isn't ours turns the steering off — the same convention as

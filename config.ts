@@ -604,53 +604,92 @@ export const DEFAULTS = {
      * this, because it runs in the background while you carry on watching.
      */
     thinkingLevel: "high" as "minimal" | "low" | "medium" | "high" | undefined,
-    /** Twenty-odd spans of JSON. Generous — an exhausted budget returns nothing. */
-    maxOutputTokens: 16_384,
+    /**
+     * The model's ceiling, and it needs to be.
+     *
+     * Thinking tokens are charged against this, and at level `high` over an hour
+     * of transcript the thinking alone runs to thirty thousand. Measured on a
+     * 44-minute lecture: prompt 21k, thinking 31k, output 1.3k — which is 32,764
+     * against a 32,768 budget, so the JSON came back cut off mid-array and the
+     * build failed outright. Being tight here doesn't buy a shorter reel, it
+     * costs the whole thing.
+     */
+    maxOutputTokens: 65_536,
     /** Minutes, not seconds: thinking hard about an hour of transcript is slow. */
     timeoutSeconds: 300,
     /**
-     * The three presets, as an importance floor and a share of the lecture.
+     * The three reels, each of which is its own call.
      *
-     * Two rules rather than one, and the pairing is the point. The **share**
-     * adapts where a fixed number of minutes cannot — ten minutes is most of a
-     * 25-minute lab and nothing of a two-hour lecture. The **floor** is what
-     * stops a preset padding itself out to fill its share: a lecture that was
-     * mostly admin yields a two-minute Deep, because there were only two
-     * minutes' worth in it.
+     * One shared pass scored 1–5 and the presets cut it locally, which made
+     * switching free. It was the wrong trade: a reel built to be cut three ways
+     * is built for none of them, and what came back was a set of medium spans
+     * that suited the middle preset and neither end. A skim wants many very
+     * short cuts; a deep pass wants many longer ones. Those are different
+     * editing jobs, so they are now different requests, and the price is that
+     * changing your mind costs a call.
      *
-     * So the share is a ceiling, never a quota. Nothing is included to reach it.
+     * `share` is the run time to aim for, as a percentage of the lecture.
+     * `minSeconds`/`maxSeconds` bound one span and `aimSeconds` is the middle of
+     * the band it should sit in — together they decide how often the reel cuts,
+     * which is the thing that actually distinguishes the three.
      *
-     * Shares are percentages rather than fractions so that each one is a plain
-     * integer in Settings; a text box holding 0.25 is a text box someone will
-     * eventually type 25 into.
+     * Percentages rather than fractions so each is a plain integer in Settings;
+     * a box holding 0.25 is a box someone will eventually type 25 into.
      */
     presets: {
-      skim: { minWeight: 5, share: 10 },
-      highlights: { minWeight: 4, share: 25 },
-      deep: { minWeight: 3, share: 45 },
+      /** A fast run through the whole lecture: many very short cuts. */
+      skim: { share: 12, minSeconds: 5, maxSeconds: 18, aimSeconds: 10 },
+      /** The middle, and the one the button is named after. */
+      highlights: { share: 25, minSeconds: 8, maxSeconds: 30, aimSeconds: 15 },
+      /** Everything worth hearing, with room for each point to finish. */
+      deep: { share: 45, minSeconds: 12, maxSeconds: 50, aimSeconds: 25 },
     },
-    /** Shorter than this isn't a span, it's a jump cut. Applied after snapping. */
-    minSegmentSeconds: 30,
+    /**
+     * How long a stretch of lecture may go unmentioned before it counts as a
+     * hole, in seconds.
+     *
+     * The measurement behind the second pass. A model told to "cover the whole
+     * lecture" can believe it has while leaving six minutes out; handing it the
+     * gap by timestamp gives it something to act on. Three minutes is about the
+     * length of one point being made, so a longer silence than that means either
+     * a genuine tangent or something missed — and the second pass is what asks
+     * which.
+     *
+     * 0 turns the check off, and with it the second call it can trigger.
+     */
+    maxGapSeconds: 180,
+    /**
+     * The floor on a span, in seconds, under every preset.
+     *
+     * A backstop beneath each reel's own `minSeconds`, not a dial: boundaries
+     * snap outwards to whole subtitle cues, and an auto-transcript's cues run a
+     * few seconds each, so anything under this is a snapping artefact rather
+     * than a span anyone chose.
+     */
+    minSegmentSeconds: 4,
     /**
      * Seconds of run-up before a span starts.
      *
      * The same reasoning as the player's own seek lead-in: a boundary that lands
      * exactly on the first word puts you a beat after the sentence that set it
-     * up. Snapped back to a real cue boundary afterwards, so it never cuts into
-     * a word.
+     * up. Kept small, because on a fifteen-second span three seconds of run-up
+     * is a fifth of the clip. Snapped back to a real cue boundary afterwards, so
+     * it never cuts into a word.
      */
-    leadInSeconds: 3,
+    leadInSeconds: 2,
     /**
      * Transcript cues are merged into blocks of at least this many seconds
      * before being sent.
      *
-     * An auto-transcript breaks on breath — a cue every two or three seconds —
-     * so a lecture arrives as a thousand fragments, which is both expensive and
-     * harder to read than the same words in paragraphs. Ten seconds keeps the
-     * anchors dense enough to choose boundaries by, and the model's choice is
-     * snapped back to a real cue afterwards, so the merge costs no precision.
+     * An auto-transcript breaks on breath, so a lecture arrives as hundreds of
+     * fragments — harder to read than the same words in paragraphs, and more
+     * expensive to send. But the merge sets the finest boundary the model can
+     * name, and this reel is built out of fifteen-second spans: merge to ten
+     * seconds and a fifteen-second span is a two-block guess. Five keeps the
+     * anchors finer than the spans being chosen, which is the whole
+     * requirement.
      */
-    blockSeconds: 10,
+    blockSeconds: 5,
     /**
      * Hard ceiling on what is assembled and sent, in characters.
      *

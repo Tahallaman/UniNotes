@@ -764,26 +764,16 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
 }
 .reel-preset:hover { color: var(--ink); border-color: var(--ink); }
 .reel-preset[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); background: var(--sunken); }
+.reel-preset:disabled { opacity: .5; cursor: default; }
+/* Not yet built, so pressing it spends a call. Dashed rather than dimmed: dimmed
+   reads as unavailable, and this one is the most available thing on the row. */
+.reel-preset.unbuilt { border-style: dashed; }
 .reel-len { font-family: var(--mono); font-size: .72rem; color: var(--faint); }
 
-/* ── The reel bar, under the video ────────────────────────────────────────── */
-
-.reel-bar { flex: 0 0 auto; padding: .35rem .8rem 0; }
-.reel-bar[hidden] { display: none; }
-/* The whole lecture, to scale. The blocks are what survives; the track showing
-   through between them is what you're skipping, which is the point of drawing
-   it at all. */
-.reel-blocks { position: relative; height: 8px; border-radius: 4px; background: var(--sunken); }
-.reel-block {
-  position: absolute; top: 0; bottom: 0; min-width: 2px; padding: 0;
-  border: 0; border-radius: 3px; background: var(--muted); cursor: pointer;
-}
-.reel-block:hover { background: var(--ink); }
-.reel-block.on { background: var(--ready); }
-.reel-why {
-  margin: .25rem 0 0; min-height: 1.1em;
-  font-size: .72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+/* The picture keeps the space under it. A strip drawing the reel against the
+   whole lecture was tried and taken out again: the panel's list already says
+   which spans exist and which one is playing, and a second view of the same
+   thing under the video is furniture. */
 
 /* Follows the selection. Fixed rather than absolute so it isn't clipped by the
    notes column's own scroll box, which is where every selection happens. */

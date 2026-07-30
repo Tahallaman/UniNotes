@@ -253,14 +253,6 @@
                still fires cuechange but draws nothing — see setSubtitles(). -->
           <div id="player-cues" class="player-cues" aria-hidden="true" hidden></div>
         </div>
-        <!-- The reel, drawn against the whole lecture. It exists to be honest
-             about what is being skipped: without it you can't tell a reel that
-             covered the lecture from one that quietly dropped the second half.
-             Each block seeks to its span. -->
-        <div id="reel-bar" class="reel-bar" hidden>
-          <div id="reel-blocks" class="reel-blocks" aria-label="Highlights, drawn against the whole lecture"></div>
-          <p id="reel-why" class="reel-why"></p>
-        </div>
         <div class="player-bar">
           <div class="player-bar-groups">
           <div class="player-bar-actions" role="group" aria-label="Player controls">
@@ -389,14 +381,14 @@
                no second call. The box below is the costed one. -->
           <div id="reel-list" class="reel-list" hidden></div>
           <div id="reel-presets" class="reel-presets" role="group" aria-label="How much to watch" hidden>
-            <button class="reel-preset" data-preset="skim" type="button">Skim<span class="reel-len"></span></button>
-            <button class="reel-preset" data-preset="highlights" type="button">Highlights<span class="reel-len"></span></button>
-            <button class="reel-preset" data-preset="deep" type="button">Deep<span class="reel-len"></span></button>
+            <button class="reel-preset" data-reel="skim" type="button">Skim<span class="reel-len"></span></button>
+            <button class="reel-preset" data-reel="highlights" type="button">Highlights<span class="reel-len"></span></button>
+            <button class="reel-preset" data-reel="deep" type="button">Deep<span class="reel-len"></span></button>
           </div>
           <form id="reel-form" class="explain-ask" hidden>
             <input id="reel-input" class="field" type="text" autocomplete="off"
-                   placeholder="Rebuild, focusing on…" aria-label="Rebuild the highlights with an instruction">
-            <button id="reel-build" class="btn" type="submit">Build</button>
+                   placeholder="Anything to focus on? (optional)" aria-label="Build the highlights, optionally with an instruction">
+            <button id="reel-build" class="btn btn-solid" type="submit">Build</button>
           </form>
         </section>
       </section>
