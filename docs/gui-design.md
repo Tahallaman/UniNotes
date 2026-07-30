@@ -513,12 +513,27 @@ are in the file's clock too, because `serveCaptions` shifts the WebVTT before
 either of them sees it. So everything on screen shares one clock and needs no
 conversion at all.
 
-Two things are in the transcript's clock, and only two: **the saved reel**, whose
-spans are cut server-side from the unshifted cues, and **the position Explain
-sends**, which the server looks up in those same cues. Those are the crossings,
-and they go through `toVideo`/`toTranscript`. Where you got to is stored in the
-file's clock, being a position in a file — the one thing that doesn't move when a
-transcript is refetched.
+One thing is in the transcript's clock: **the saved reel**, whose spans are
+snapped to the cues as Panopto wrote them. That is the one crossing, through
+`toVideo`/`toTranscript`. Where you got to is stored in the file's clock, being a
+position in a file — the one thing that doesn't move when a transcript is
+refetched.
+
+**Everything sent to a model is in the recording's clock**, both features, no
+exceptions. That is the clock the notes are already in, so nothing of yours is
+rewritten on the way out; it is the clock you are looking at, so a time the model
+mentions in prose is a time you can find; and it is one rule to hold rather than
+two opposite ones. Explain sends nothing else. Highlights shifts the *transcript*
+up to meet the notes and then brings the answer back down before saving it, which
+is worth the extra step for what it buys: a reel stored in the transcript's clock
+survives the offset being corrected afterwards, where a reel stored in the file's
+would be silently wrong by the difference, for good, with nothing on screen to
+say so.
+
+The alternative — rebasing the notes down into the transcript's clock — was
+built first and is a worse trade for one reason beyond the above: it rewrites the
+student's own notes before the model reads them, so a timestamp the model quotes
+back is a number that appears nowhere in the file they have.
 
 The first version of this converted the notes as well, on the assumption that a
 timestamp is a timestamp. It made every click land four minutes late on exactly

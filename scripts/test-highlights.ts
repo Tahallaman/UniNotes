@@ -13,7 +13,7 @@
  *   npm run test:highlights
  */
 
-import { clean, gaps, plan, readJsonArray, trim, type Cue, type Segment } from "../src/gui/highlights.js";
+import { blocks, clean, gaps, plan, readJsonArray, trim, type Cue, type Segment } from "../src/gui/highlights.js";
 
 const checks: Array<[string, boolean]> = [];
 function check(name: string, ok: boolean): void {
@@ -289,6 +289,49 @@ check("without shortening its cuts below what a cue can say", short.aimSeconds >
 check(
   "and Deep runs several times longer on the same lecture",
   thorough.spans * thorough.aimSeconds > short.spans * short.aimSeconds * 3,
+);
+
+// ── The two clocks ────────────────────────────────────────────────────────────
+
+// A lecture Panopto trimmed at the front: the transcript's 00:10 is the
+// recording's 04:00. The model is shown the recording's clock — the notes' — and
+// what it returns is brought back to the transcript's before it is snapped and
+// saved, so a reel survives the offset being corrected later.
+const twoClocks: Cue[] = [
+  { start: 10, end: 20, text: "first" },
+  { start: 20, end: 30, text: "second" },
+];
+const OFF = 230;
+
+check("with no offset the transcript reads as written", blocks(twoClocks, 30).startsWith("[00:10]"));
+check("with one, it is shown in the recording's clock", blocks(twoClocks, 30, OFF).startsWith("[04:00]"));
+check("and the words are untouched by it", blocks(twoClocks, 30, OFF).includes("first second"));
+
+// The return leg. What the model gives back is in the clock it was shown, so a
+// span it calls 04:00 is the cue at 00:10 — and that is what has to be stored,
+// because that is what the cues say and what survives a corrected offset.
+const shown = 240; // 04:00 in the recording's clock
+check(
+  "a returned time comes back to the transcript's clock",
+  clean(
+    [{ start: shown, end: shown + 20, weight: 5, why: "the point" }].map((r) => ({
+      ...r, start: r.start - OFF, end: r.end - OFF,
+    })),
+    twoClocks,
+    30,
+    { leadInSeconds: 0, minSegmentSeconds: 4 },
+  )[0]?.start === 10,
+);
+// The failure this guards against: forgetting the return leg stores 240 against a
+// transcript that ends at 30, which the lecture-length clamp then flattens.
+check(
+  "and forgetting to convert it would not survive the clamp",
+  clean(
+    [{ start: shown, end: shown + 20, weight: 5, why: "the point" }],
+    twoClocks,
+    30,
+    { leadInSeconds: 0, minSegmentSeconds: 4 },
+  ).every((s) => s.start !== 10),
 );
 
 let bad = 0;

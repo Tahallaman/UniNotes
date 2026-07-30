@@ -58,7 +58,6 @@ import { captionsPath, parseVtt } from "../panopto/captions.js";
 import { listLectures, readNotes } from "./library.js";
 import { readOverview } from "./explain.js";
 import { effectiveConfig } from "./effective.js";
-import { shiftTimestamps } from "../utils/timestamps.js";
 import { log } from "../utils/logger.js";
 
 /** One span of lecture worth watching. */
@@ -176,13 +175,16 @@ interface Turn { role: "user" | "model"; text: string }
  * no precision at all. Only the anchors get coarser, and ten seconds is far
  * denser than the spans being chosen.
  */
-function blocks(cues: Cue[], seconds: number): string {
+export function blocks(cues: Cue[], seconds: number, offsetSeconds = 0): string {
   const out: string[] = [];
   let start = -1;
   let text: string[] = [];
 
+  // Printed in the recording's clock, which for a lecture Panopto trimmed at the
+  // front is not the one these cues are written in. The notes in the same prompt
+  // are in the recording's, so this is the side that moves — see buildHighlights.
   const flush = () => {
-    if (start >= 0 && text.length > 0) out.push(`[${clockText(start)}] ${text.join(" ")}`);
+    if (start >= 0 && text.length > 0) out.push(`[${clockText(start + offsetSeconds)}] ${text.join(" ")}`);
     start = -1;
     text = [];
   };
@@ -676,16 +678,35 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // spent on spans that can only come from the part where people were talking
   // anyway.
   //
-  // Note this is a transcript time and stays one: the offset corrects playback,
-  // never the reel, so a lecture aligned after its reel was cut needs no rebuild.
+  // A length, so it belongs to neither clock and the offset does not touch it.
   const lectureSeconds = cues[cues.length - 1].end;
+
+  /**
+   * How far this recording runs ahead of its own transcript.
+   *
+   * The prompt is written entirely in the recording's clock — the notes' clock,
+   * the player's clock, the one the student sees — because that is the clock
+   * everything else in UniNotes speaks, and because a time the model mentions in
+   * prose should be a time you can go and find. So the transcript is what moves,
+   * and the notes go in untouched.
+   *
+   * What comes *back* is converted the other way before it is saved. A reel is
+   * stored in the transcript's clock so that it survives this number changing:
+   * correct a 230 to a 237 next week and a stored transcript time still plays in
+   * the right place, where a stored file time would be seven seconds wrong for
+   * good, with nothing on screen to say so.
+   */
+  const offset = entry.captionOffset ?? 0;
 
   const notes = readNotes(key, "raw") ?? readNotes(key, "pretty");
   const overview = readOverview(notes?.content ?? "");
 
   let body =
     `Lecture: "${entry.title}" (${entry.courseCode}). ` +
-    `The recording runs ${clockText(lectureSeconds)}.` +
+    (offset
+      ? `The speech runs from ${clockText(offset)} to ${clockText(lectureSeconds + offset)}, `
+        + `${clockText(lectureSeconds)} of lecture.`
+      : `The recording runs ${clockText(lectureSeconds)}.`) +
     section("The brief for this reel", brief(preset, presetCfg, lectureSeconds));
 
   if (overview.topics.length > 0 || overview.summary) {
@@ -702,27 +723,17 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // exact times but no judgement. Reading the notes first is what lets the model
   // find the meat in them and then pin it to a real time below.
   //
-  // Rebased into the transcript's clock on the way in, which matters precisely
-  // because the two are asked to work together. The notes were written by a model
-  // watching the downloaded file; the transcript is Panopto's, cut to a recording
-  // trimmed at the front. On the lecture this was measured against they disagree
-  // by 3:57 — the notes put a quotation at 10:59 that the transcript has at
-  // 07:01. Sent unaligned, the instruction "find where the notes say this
-  // happened" points four minutes from where it happened, and a time taken from
-  // the notes still snaps to a real cue, so the mistake would come back looking
-  // perfectly valid. Zero for almost every lecture, and then this does nothing.
-  if (notes) {
-    const text = stripFrontmatter(notes.content);
-    // Guarded rather than called with 0, because shiftTimestamps normalises
-    // padding as it goes and would rewrite the notes of every lecture that has
-    // no offset. Nothing was wrong with those, and a correction for a handful of
-    // trimmed recordings should be invisible to the rest.
-    const offset = entry.captionOffset ?? 0;
-    body += section("The notes for this lecture", offset ? shiftTimestamps(text, -offset) : text);
-  }
+  // Untouched, and this is the half of the alignment that matters: the whole
+  // instruction is "find, in the transcript, when the notes say this happened",
+  // and on a trimmed recording the two disagree by minutes. Measured on the
+  // lecture this was built against: the notes put a quotation at 10:59 that the
+  // transcript has at 07:01. Sent unaligned, that instruction points four
+  // minutes from where it points, and a time taken from the notes still snaps to
+  // a real cue — so the mistake would come back looking perfectly valid.
+  if (notes) body += section("The notes for this lecture", stripFrontmatter(notes.content));
   body += section(
     "The transcript. Every start and end you give must be a time that appears here",
-    blocks(cues, cfg.blockSeconds),
+    blocks(cues, cfg.blockSeconds, offset),
   );
   if (steer) body += section("What this student has asked for in particular", steer);
   // Last, and repeated from the top of the instruction: the length band and the
@@ -758,10 +769,31 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
       }),
     );
 
+  /**
+   * The answer, brought back into the transcript's clock.
+   *
+   * The model was given the recording's, so this is where a reel returns to the
+   * one it is stored and validated in — cue snapping happens against the cues as
+   * Panopto wrote them, and a saved reel has to outlive a correction to the
+   * offset it was cut under.
+   */
+  const read = (text: string): unknown[] => {
+    const rows = readJsonArray(text);
+    if (!offset) return rows;
+    return rows.map((row) => {
+      const r = row as Record<string, unknown>;
+      const back = (v: unknown): unknown => {
+        const at = readTime(v);
+        return at === null ? v : clockText(Math.max(0, at - offset));
+      };
+      return { ...r, start: back(r.start), end: back(r.end) };
+    });
+  };
+
   const opening = `Cut the ${preset} reel for this lecture.`;
   let reply = await ask([{ role: "user", text: opening }]);
   if (!reply) throw new Error("The model returned nothing.");
-  let cleaned = clean(readJsonArray(reply), cues, lectureSeconds, limits);
+  let cleaned = clean(read(reply), cues, lectureSeconds, limits);
 
   /**
    * One editor's note, when the first cut came back too coarse.
@@ -802,11 +834,14 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
       "",
       // The specific holes, by timestamp. Far more use than "cover the lecture":
       // it can go and read those minutes again rather than guess at where it was
-      // thin, and the transcript it needs is already in the context above.
+      // thin, and the transcript it needs is already in the context above. Named
+      // in the recording's clock, like everything else it has been shown — these
+      // are measured against spans that have already been converted back.
       holes.length > 0
         ? "These stretches have nothing in them at all:\n"
           + holes.map(([from, to]) =>
-            `  - ${clockText(from)} to ${clockText(to)} (${Math.round((to - from) / 60)} minutes)`).join("\n")
+            `  - ${clockText(from + offset)} to ${clockText(to + offset)} `
+            + `(${Math.round((to - from) / 60)} minutes)`).join("\n")
           + "\n\nGo back to the transcript for each one and read what is actually said there. If it is "
           + "admin, a break or a tangent, leave it out and say nothing. If there is a definition, a "
           + "figure, an example or an argument in it — and in a lecture there usually is — cut it."
@@ -831,7 +866,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
       { role: "user", text: note },
     ]);
     if (second) {
-      const revised = clean(readJsonArray(second), cues, lectureSeconds, limits);
+      const revised = clean(read(second), cues, lectureSeconds, limits);
       // Kept only if it actually improved on what was complained about: more
       // cuts, or the same cuts covering more of the lecture. A revision that came
       // back thinner is a worse reel, and having paid for it is no reason to use
