@@ -124,6 +124,12 @@ export class HighlightsUnavailableError extends Error {
 const FILENAME = "highlights.json";
 /** A reel cuts often — an hour can legitimately be fifty or sixty spans. */
 const MAX_SEGMENTS = 250;
+/**
+ * A closing full stop, question or exclamation, allowing for a quote or bracket
+ * after it. Auto-transcripts punctuate, which is what makes finishing a sentence
+ * something the code can do rather than something the model has to be asked for.
+ */
+const ENDS_SENTENCE = /[.!?]["')\]]*\s*$/;
 const MAX_STEER_CHARS = 500;
 
 // ── Times ────────────────────────────────────────────────────────────────────
@@ -144,10 +150,17 @@ function clockText(seconds: number): string {
  * seconds. Both are cheap to accept and the alternative is throwing away a
  * perfectly good span over its formatting.
  */
-function readTime(value: unknown): number | null {
+function readTime(value: unknown, side: "first" | "last" = "first"): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
   if (typeof value !== "string") return null;
-  const text = value.trim();
+  let text = value.trim();
+  // The transcript is labelled with ranges now, so a model will occasionally
+  // hand a whole one back in a single field. Which half is wanted depends on
+  // which field it is: "07:01–07:06" as a start means 07:01 and as an end means
+  // 07:06. Reading it as the wrong half is the mistake this whole change is
+  // about, so it is worth the two lines rather than the dropped span.
+  const range = text.split(/\s*[–—-]\s*|\s+to\s+/i).filter((part) => part.trim().length > 0);
+  if (range.length > 1) text = (side === "last" ? range[range.length - 1] : range[0]).trim();
   const clock = /^(?:(\d+):)?(\d{1,3}):(\d{2})(?:\.\d+)?$/.exec(text);
   if (clock) {
     const [, h, m, s] = clock;
@@ -208,21 +221,37 @@ interface Turn { role: "user" | "model"; text: string }
 export function blocks(cues: Cue[], seconds: number, offsetSeconds = 0): string {
   const out: string[] = [];
   let start = -1;
+  let end = -1;
   let text: string[] = [];
 
+  // Both ends of the block, not just its start.
+  //
+  // Start-only was a quiet, systematic bias towards cutting people off. The
+  // model is told every time it gives must be one that appears here, so with
+  // only starts printed, every *end* it could name was some later block's start
+  // — which is a few seconds past the words it meant to keep, or, if it named
+  // the block it wanted, a few seconds short of them. There was no way to say
+  // "up to the end of this" at all. Printing the end makes that sayable, and
+  // makes the silence between one block's end and the next one's start visible,
+  // which is where a cut belongs.
+  //
   // Printed in the recording's clock, which for a lecture Panopto trimmed at the
   // front is not the one these cues are written in. The notes in the same prompt
   // are in the recording's, so this is the side that moves — see buildHighlights.
   const flush = () => {
     if (start >= 0 && text.length > 0) {
-      out.push(`[${clockText(toRecording(start, offsetSeconds))}] ${text.join(" ")}`);
+      const from = clockText(toRecording(start, offsetSeconds));
+      const to = clockText(toRecording(end, offsetSeconds));
+      out.push(`[${from}–${to}] ${text.join(" ")}`);
     }
     start = -1;
+    end = -1;
     text = [];
   };
 
   for (const cue of cues) {
     if (start < 0) start = cue.start;
+    end = cue.end;
     text.push(cue.text);
     if (cue.end - start >= seconds) flush();
   }
@@ -501,9 +530,12 @@ export function clean(
   cfg: {
     leadInSeconds: number;
     minSegmentSeconds: number;
-    maxSeconds?: number;
-    /** Optional so a test can hand this three numbers and mean no run-out. */
+    /** The backstop against a runaway span. Not the preset's own ceiling. */
+    maxSegmentSeconds?: number;
+    /** Optional so a test can hand this three numbers and mean none of them. */
     tailSeconds?: number;
+    finishSentenceSeconds?: number;
+    joinGapSeconds?: number;
   } = effectiveConfig().highlights,
 ): Segment[] {
   const starts = cues.map((c) => c.start);
@@ -518,7 +550,7 @@ export function clean(
     return best;
   };
 
-  /** The end of the cue covering `t`, so a span closes on a finished sentence. */
+  /** The end of the cue covering `t`, so a span closes on a whole cue. */
   const snapEnd = (t: number): number => {
     let best = t;
     for (const cue of cues) {
@@ -527,13 +559,35 @@ export function clean(
     return best;
   };
 
+  /**
+   * Carry an end forward to the end of the sentence it lands in.
+   *
+   * A cue boundary is a breath, not a full stop — "so what we do here is" is a
+   * complete cue and half a thought, and ending on it is the cut that reads as
+   * broken however well-chosen the span was. The transcript is punctuated, so
+   * the real boundary is available; take it, as long as it is close.
+   *
+   * If no sentence closes within the allowance, the end stays where it was: a
+   * hard cut is better than a span that ran on into the next point looking for
+   * a full stop that never came.
+   */
+  const finishSentence = (t: number, allowance: number): number => {
+    if (allowance <= 0) return t;
+    for (const cue of cues) {
+      if (cue.end < t) continue;
+      if (cue.end > t + allowance) break;
+      if (ENDS_SENTENCE.test(cue.text)) return cue.end;
+    }
+    return t;
+  };
+
   const segments: Segment[] = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
     const row = item as Record<string, unknown>;
 
     const from = readTime(row.start);
-    const to = readTime(row.end);
+    const to = readTime(row.end, "last");
     if (from === null || to === null || to <= from) continue;
 
     const why = String(row.why ?? "").trim().slice(0, 300);
@@ -542,29 +596,20 @@ export function clean(
     const weight = Math.min(5, Math.max(1, Math.round(Number(row.weight) || 3)));
 
     let start = snapStart(Math.max(0, from - cfg.leadInSeconds));
-    let end = snapEnd(to);
+    let end = finishSentence(snapEnd(to), cfg.finishSentenceSeconds ?? 0);
     if (lectureSeconds > 0) {
       start = Math.min(start, lectureSeconds);
       end = Math.min(end, lectureSeconds);
     }
-    // Held to this reel's own ceiling, and cut at a cue so it still ends on a
-    // finished sentence. A span that ran long was the failure that made these
-    // three separate builds in the first place; letting one through here would
-    // put it straight back.
-    if (cfg.maxSeconds && end - start > cfg.maxSeconds) {
-      const limit = start + cfg.maxSeconds;
-      const cue = cues.find((c) => c.end >= limit);
-      // The nearer boundary of the cue the limit lands in, not always its end.
-      // Rounding outwards every time overshot the ceiling by up to a whole cue —
-      // an auto-transcript's are six or seven seconds, which turned a 16-second
-      // skim cut into a 22-second one and made Skim and Highlights look alike.
-      // The cue's own start is a legitimate boundary too, as long as the span
-      // that remains is still a span.
-      const nearer = cue && cue.start > start && (limit - cue.start) < (cue.end - limit)
-        ? cue.start
-        : cue?.end;
-      const capped = nearer ?? limit;
-      end = Math.min(Math.max(capped, start + cfg.minSegmentSeconds), end);
+    // The only ceiling left, and it is a backstop rather than a shape: the
+    // preset's own maxSeconds is asked for in the brief and no longer enforced
+    // here. Cutting a span back to a number overruled the model on exactly the
+    // spans where it mattered — the long ones are long because something was
+    // still being explained, and the cap landed mid-explanation.
+    const ceiling = cfg.maxSegmentSeconds ?? 0;
+    if (ceiling > 0 && end - start > ceiling) {
+      const cue = cues.find((c) => c.end >= start + ceiling);
+      end = Math.max(cue?.end ?? start + ceiling, start + cfg.minSegmentSeconds);
     }
     if (end - start < cfg.minSegmentSeconds) continue;
 
@@ -582,7 +627,40 @@ export function clean(
     if (segment.weight > last.weight) kept[kept.length - 1] = segment;
   }
 
-  return runOut(kept.slice(0, MAX_SEGMENTS), lectureSeconds, cfg.tailSeconds ?? 0);
+  const joined = join(kept, cfg.joinGapSeconds ?? 0);
+  return runOut(joined.slice(0, MAX_SEGMENTS), lectureSeconds, cfg.tailSeconds ?? 0);
+}
+
+/**
+ * Spans with nothing between them are one span.
+ *
+ * Three entries in a row separated by a second of silence are not three cuts —
+ * nothing is being cut. They play as one continuous stretch, so presenting them
+ * as three rows with three reasons describes a distinction nobody watching can
+ * hear, and it is the model thinking in claims rather than in cuts.
+ *
+ * Both reasons are kept, in order. The older rule here refused to merge on the
+ * grounds that a merged span inherits a reason describing half of itself — true,
+ * and the answer is to carry both halves rather than to leave the cut broken in
+ * two. The weight becomes the strongest of them, because the merged span
+ * contains whatever earned that weight.
+ */
+function join(segments: Segment[], gapSeconds: number): Segment[] {
+  if (segments.length === 0) return segments;
+  const out: Segment[] = [segments[0]];
+  for (const segment of segments.slice(1)) {
+    const last = out[out.length - 1];
+    if (segment.start - last.end > gapSeconds) { out.push(segment); continue; }
+    out[out.length - 1] = {
+      start: last.start,
+      end: Math.max(last.end, segment.end),
+      weight: Math.max(last.weight, segment.weight),
+      // Trimmed at the same 300 the model's own reasons are held to, so a run of
+      // joins can't grow one unbounded.
+      why: `${last.why}; ${segment.why}`.slice(0, 300),
+    };
+  }
+  return out;
 }
 
 /**
@@ -685,20 +763,21 @@ function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string 
     "",
     character[preset],
     "",
-    `- Around ${spans} spans. Somewhat fewer or somewhat more is fine — what matters is that it is`,
-    `  that sort of number rather than a dozen, because the number of times a reel cuts is what`,
-    `  makes it a reel rather than a summary. If in doubt, err towards more.`,
-    `- Each span ${cfg.minSeconds} to ${cfg.maxSeconds} seconds, and they must AVERAGE about`,
-    `  ${aimSeconds} seconds. Not "mostly under the maximum" — averaging ${aimSeconds}.`,
-    `- So the whole reel runs about ${clockText(target)}: roughly ${cfg.share}% of this ${minutes}-minute lecture.`,
+    `- Around ${spans} spans, give or take. That sort of number rather than a dozen, because how`,
+    `  often a reel cuts is what makes it a reel rather than a summary. It is a sense of scale, not`,
+    `  a quota — if this lecture genuinely wants fewer longer stretches, or more shorter ones, do`,
+    `  that instead and let the number land where it lands.`,
+    `- Cuts of around ${aimSeconds} seconds, most of them somewhere near ${cfg.minSeconds}–${cfg.maxSeconds}.`,
+    `  Go longer whenever the material needs it: a worked example that takes a minute to land is one`,
+    `  span of a minute, not three of twenty seconds.`,
+    `- Which should come to something like ${clockText(target)}, or ${cfg.share}% of this ${minutes}-minute`,
+    `  lecture. Running over is fine if the lecture earns it. A reel that covers the whole lecture`,
+    `  properly and runs long is better than one held to a percentage by leaving things out.`,
     "",
-    "Before you answer, do this check. Count your spans, and work out their average length. If the",
-    `count is well short of ${spans}, you have skipped material — go back through the transcript for it.`,
-    `If the average is over ${aimSeconds} seconds, you are keeping the run-up and the trailing-off`,
-    "around each point: trim both ends, and where a span covers two separate claims, split it in two.",
-    "",
-    "Going over the total is worse than going under: spans past it are dropped weakest-first and you",
-    "do not get to choose which. Getting the count right is how you keep what you meant to keep.",
+    "Before you answer, read your list back as a reel — in order, with the gaps closed — and ask",
+    "whether it tells the story of this lecture to someone who did not attend. Fix what it needs:",
+    `a stretch you skipped, a span that ends mid-sentence, a join that lands mid-thought, or a run`,
+    "of spans sitting end to end that should have been one.",
   ].join("\n");
 }
 
@@ -817,10 +896,16 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
 
   const instruction = `${settings.prompts.highlights.trim()}\n\n# The lecture\n\n${body}`;
   const limits = {
+    // The preset's own minSeconds no longer joins this. It was a floor on what
+    // the model was allowed to choose, and a short span it chose deliberately —
+    // the ten seconds where the number is said — is the point of the reel, not a
+    // mistake to round away. What is left is the snapping-artefact backstop.
     leadInSeconds: cfg.leadInSeconds,
-    minSegmentSeconds: Math.max(cfg.minSegmentSeconds, presetCfg.minSeconds),
-    maxSeconds: presetCfg.maxSeconds,
+    minSegmentSeconds: cfg.minSegmentSeconds,
+    maxSegmentSeconds: cfg.maxSegmentSeconds,
     tailSeconds: cfg.tailSeconds,
+    finishSentenceSeconds: cfg.finishSentenceSeconds,
+    joinGapSeconds: cfg.joinGapSeconds,
   };
   const ask = (turns: Turn[]) =>
     vertexLimit(() =>
@@ -847,11 +932,11 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
     if (!offset) return rows;
     return rows.map((row) => {
       const r = row as Record<string, unknown>;
-      const back = (v: unknown): unknown => {
-        const at = readTime(v);
+      const back = (v: unknown, side: "first" | "last"): unknown => {
+        const at = readTime(v, side);
         return at === null ? v : clockText(toTranscript(at, offset));
       };
-      return { ...r, start: back(r.start), end: back(r.end) };
+      return { ...r, start: back(r.start, "first"), end: back(r.end, "last") };
     });
   };
 
@@ -954,7 +1039,7 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // and coverage outranks it either way.
   const segments = trim(
     cleaned,
-    lectureSeconds * (presetCfg.share / 100) * 1.5,
+    lectureSeconds * (presetCfg.share / 100) * (1 + cfg.overrunAllowance / 100),
     cfg.maxGapSeconds,
     lectureSeconds,
     wanted,

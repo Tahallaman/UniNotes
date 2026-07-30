@@ -116,39 +116,92 @@ const overrun = clean(
 );
 check("a span is clamped to the recording's length", overrun[0]?.end === 1200);
 
-// ── clean: this reel's own ceiling on a span ──────────────────────────────
+// ── clean: the backstop, which is not a shape ─────────────────────────────
+//
+// Each preset's own longest-cut figure is asked for in the brief and enforced
+// nowhere: cutting a span back to a number overruled the model on exactly the
+// spans where it mattered, because a long span is long when something is still
+// being explained. What is left only catches a runaway.
 
-const capped = clean(
-  [{ start: 100, end: 400, weight: 5, why: "far longer than a skim allows" }],
-  cues,
-  1200,
-  { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 20 },
+const runaway = clean(
+  [{ start: 100, end: 900, weight: 5, why: "a span that swallowed the lecture" }],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, maxSegmentSeconds: 20 },
 );
-check("a span is cut back to the preset's ceiling", (capped[0]?.end ?? 0) - (capped[0]?.start ?? 0) <= 25);
-// Cut at a cue rather than at the arithmetic: 100 + 20 is 120, which is where a
-// cue happens to end here, so the ceiling and the boundary agree exactly.
-check("and the cut lands on a cue boundary", capped[0]?.end === 120);
+check("a runaway span is caught by the backstop", runaway[0]?.end === 120);
 
-// Where they don't agree, the nearer boundary of that cue wins. 100 + 18 = 118
-// sits in the cue running 115–120, and 120 is nearer than 115.
-const cappedOdd = clean(
-  [{ start: 100, end: 400, weight: 5, why: "long" }],
-  cues,
-  1200,
-  { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 18 },
+const uncapped = clean(
+  [{ start: 100, end: 400, weight: 5, why: "far longer than a skim would ask for" }],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4 },
 );
-check("a ceiling mid-cue takes the nearer boundary", cappedOdd[0]?.end === 120);
+check("but nothing else caps a span any more", uncapped[0]?.end === 400);
 
-// And when the limit lands just inside a cue, it rounds back rather than out —
-// 100 + 17 = 117 is nearer 115 than 120, so the span ends early instead of over.
-const cappedBack = clean(
-  [{ start: 100, end: 400, weight: 5, why: "long" }],
-  cues,
-  1200,
-  { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 17 },
+// ── clean: finishing the sentence ─────────────────────────────────────────
+//
+// A cue boundary is a breath. These cues are punctuated the way a real
+// auto-transcript's are, so the sentence's own end can be found.
+
+const spoken: Cue[] = [
+  { start: 0, end: 5, text: "This is the first sentence." },
+  { start: 5, end: 10, text: "And this one runs on" },
+  { start: 10, end: 15, text: "past the boundary before it stops." },
+  { start: 15, end: 20, text: "A new one begins here." },
+];
+const sentenceCfg = { leadInSeconds: 0, minSegmentSeconds: 1, finishSentenceSeconds: 12 };
+
+const midClause = clean([{ start: 5, end: 8, weight: 4, why: "ends mid-clause" }], spoken, 100, sentenceCfg);
+check("a span ending mid-sentence runs on to the full stop", midClause[0]?.end === 15);
+
+const already = clean([{ start: 0, end: 3, weight: 4, why: "already ends on one" }], spoken, 100, sentenceCfg);
+check("one that already ends on a sentence stays put", already[0]?.end === 5);
+
+const tooFar = clean([{ start: 5, end: 8, weight: 4, why: "ends mid-clause" }], spoken, 100,
+  { leadInSeconds: 0, minSegmentSeconds: 1, finishSentenceSeconds: 2 });
+check("but it will not wait forever for one", tooFar[0]?.end === 10);
+
+const noFinish = clean([{ start: 5, end: 8, weight: 4, why: "ends mid-clause" }], spoken, 100,
+  { leadInSeconds: 0, minSegmentSeconds: 1 });
+check("and switched off it is exactly as before", noFinish[0]?.end === 10);
+
+// ── clean: spans with nothing between them are one span ───────────────────
+
+const split = clean(
+  [
+    { start: 100, end: 148, weight: 3, why: "says what a baseline is" },
+    { start: 151, end: 178, weight: 5, why: "says what happens if you get it wrong" },
+    { start: 500, end: 548, weight: 4, why: "somewhere else entirely" },
+  ],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, joinGapSeconds: 3 },
 );
-check("a ceiling just inside a cue rounds back to its start", cappedBack[0]?.end === 115);
-check("which keeps the span under the ceiling", (cappedBack[0]?.end ?? 0) - 100 <= 17);
+check("a passage split into two comes back as one", split.length === 2);
+check("covering both of them", split[0]?.start === 100 && split[0]?.end === 180);
+check("keeping both reasons", /baseline is; .*get it wrong/.test(split[0]?.why ?? ""));
+check("and the stronger weight", split[0]?.weight === 5);
+check("while a genuine cut is left alone", split[1]?.start === 500);
+
+// The join is what a viewer can hear, not what the model wrote: spans far
+// enough apart that real lecture is dropped between them stay separate.
+const apart = clean(
+  [
+    { start: 100, end: 148, weight: 4, why: "first" },
+    { start: 200, end: 248, weight: 4, why: "second" },
+  ],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, joinGapSeconds: 3 },
+);
+check("two moments with a gap between them stay two spans", apart.length === 2);
+
+// ── clean: a range handed back in one field ───────────────────────────────
+//
+// The transcript is labelled [12:30–12:41] now, so sooner or later a model
+// echoes a whole label into a single field. Which half is meant depends on which
+// field it is, and reading an end as its range's start is exactly the early cut
+// this change exists to stop.
+
+const echoed = clean(
+  [{ start: "01:40–01:45", end: "03:15–03:20", weight: 4, why: "a range in both fields" }],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4 },
+);
+check("a range in the start field reads as its start", echoed[0]?.start === 100);
+check("and a range in the end field reads as its end", echoed[0]?.end === 200);
 
 // ── clean: the run-out at the end of a span ───────────────────────────────
 //
@@ -180,26 +233,27 @@ check("and no span is lost to it", crowded.length === 2);
 // the whole 8 seconds.
 check("the last span still gets its full run-out", crowded[1]?.end === 208);
 
-// Spans that already abut have nothing to add: playback is continuous across
-// that join, so nothing was being clipped there in the first place.
+// Spans that touch are joined before the run-out is applied, so the beat is
+// added to the end of the joined span rather than inside it — where it would
+// have been silently swallowed anyway.
 const abutting = clean(
   [{ start: 100, end: 148, weight: 4, why: "first" }, { start: 151, end: 198, weight: 4, why: "second" }],
   cues, 1200, tailCfg,
 );
-check("nothing is added where the next span follows immediately", abutting[0]?.end === 150);
+check("touching spans are joined, not padded apart", abutting.length === 1);
+check("and the run-out lands on the end of the whole thing", abutting[0]?.end === 202);
 
 const atEnd = clean([{ start: 1180, end: 1195, weight: 4, why: "the last one" }], cues, 1200,
   { leadInSeconds: 0, minSegmentSeconds: 4, tailSeconds: 8 });
 check("a run-out cannot pass the end of the recording", atEnd[0]?.end === 1200);
 
-// Deliberately after the cap: a span already at its preset's ceiling is the one
-// most likely to be cut mid-sentence, so capping the run-out away would take it
-// off exactly where it is needed.
+// The backstop is applied before the run-out, so a span held back by it still
+// gets its beat — that span is the one most likely to have been cut mid-word.
 const cappedTail = clean(
-  [{ start: 100, end: 400, weight: 5, why: "long" }],
-  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, maxSeconds: 20, tailSeconds: 2 },
+  [{ start: 100, end: 900, weight: 5, why: "long" }],
+  cues, 1200, { leadInSeconds: 0, minSegmentSeconds: 4, maxSegmentSeconds: 20, tailSeconds: 2 },
 );
-check("the run-out survives the preset's ceiling", cappedTail[0]?.end === 122);
+check("the run-out survives the backstop", cappedTail[0]?.end === 122);
 
 // ── trim: holding a reel to the time it was asked for ─────────────────────
 
@@ -354,8 +408,10 @@ const twoClocks: Cue[] = [
 ];
 const OFF = 230;
 
-check("with no offset the transcript reads as written", blocks(twoClocks, 30).startsWith("[00:10]"));
-check("with one, it is shown in the recording's clock", blocks(twoClocks, 30, OFF).startsWith("[04:00]"));
+// Both ends of the label, because both are times the model is invited to use —
+// an offset applied to only one of them would be a range that spans two clocks.
+check("with no offset the transcript reads as written", blocks(twoClocks, 30).startsWith("[00:10–00:30]"));
+check("with one, both ends move into the recording's clock", blocks(twoClocks, 30, OFF).startsWith("[04:00–04:20]"));
 check("and the words are untouched by it", blocks(twoClocks, 30, OFF).includes("first second"));
 
 // The return leg. What the model gives back is in the clock it was shown, so a

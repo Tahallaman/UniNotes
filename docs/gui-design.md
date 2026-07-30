@@ -811,6 +811,51 @@ the tail of something you were not meant to hear. Snapping the start back to a c
 boundary is what stops a cut landing mid-word, and it was always doing the work
 the lead-in was credited with. It stays as a setting, at zero.
 
+**The transcript shows both ends of a block.** It used to print only the start —
+`[12:30] the words` — while the prompt required every time the model gave to be
+one that appeared in the transcript. Those two rules together made it impossible
+to say "up to the end of this": the only times available were starts, so an end
+was either the next block's start, a few seconds past the words meant to be
+kept, or the wanted block's own start, a few seconds short of them. A systematic
+bias towards cutting people off, produced by a formatting decision. Labels are
+now `[12:30–12:41]`, which costs about 2.7k characters on a 44-minute lecture,
+and the ends are the times the brief asks spans to close on.
+
+It also makes the silence visible, which is the more interesting half. Measured
+on the ENGGEN 403 transcript: **no** cue runs straight into the next — all 407
+have a gap before them, up to 6.5 seconds. Those gaps are pauses, and a cut that
+lands in one is inaudible, so the prompt now asks the model to prefer a boundary
+with silence after it. That is inference the model can actually do, because the
+numbers are finally in front of it.
+
+**Nothing enforces a preset's cut length any more.** Each reel's `maxSeconds` is
+in the brief and nowhere else; `maxSegmentSeconds` is a single backstop against
+one span swallowing the lecture. Cutting a span back to a per-preset ceiling
+overruled the model precisely where it mattered — a long span is long because
+something was still being explained, and the cap landed in the middle of it.
+The preset's `minSeconds` likewise no longer floors what the model may choose:
+the ten seconds where the number is said is the point of a reel, not an error to
+round away. Same reasoning for the share, which is now allowed to overrun by
+`overrunAllowance` before anything is dropped: a reel that covers the lecture at
+40% beats one cut to 25% by deleting its weakest third.
+
+**Spans with nothing between them are one span.** `joinGapSeconds` joins spans
+that touch or nearly touch, keeping both reasons and the stronger weight. The
+old rule refused to merge, on the grounds that a merged span inherits a reason
+describing half of itself — true, and the answer is to carry both halves rather
+than leave the cut broken in two. The prompt asks for it as well, and that is
+the better half of the fix: three timestamps in a row with a second between them
+are not three cuts, because nothing is being cut, and a model producing them is
+thinking in claims rather than in cuts. The prompt used to *ask* for that —
+"prefer two short spans over one long one, always" — which is where the
+behaviour came from.
+
+**A span finishes its sentence.** `finishSentenceSeconds` carries an end forward
+to the next full stop within the allowance. A cue boundary is a breath, not a
+sentence, so snapping to one still ends on "and the reason for that is—". The
+transcript is punctuated, so the real boundary is available to the code, which
+is why this is not something the model has to be trusted to get right.
+
 **But a run-out after one.** `tailSeconds` is 2, and the asymmetry is the point.
 A span ends on a cue boundary, and a cue's end is where the transcriber stopped
 writing rather than where the speaker stopped talking — measured on a real reel

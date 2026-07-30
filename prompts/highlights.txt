@@ -33,20 +33,37 @@ Anything the notes are quiet about is probably not worth cutting. Anything the
 notes give a heading, a figure, or a bullet to is probably worth at least one
 span.
 
-CUT SHORT AND CUT OFTEN
+CUT WHERE THERE IS SOMETHING TO CUT
 
-- One idea, claim, number or definition per span. Not a topic. Not a section.
-  Not "the part about baselines" — the sentence where he says what a baseline
-  *is*, and separately the sentence where he says what happens if you get it
-  wrong. Those are two spans.
-- Prefer two short spans over one long one, always. If two good moments are
-  twenty seconds apart, that is TWO spans with the twenty seconds cut out, not
-  one span with the padding left in.
+A span is not a claim. A span is a stretch you are keeping, and what makes it a
+separate span is the material you are dropping before the next one.
+
+- Two moments with something worth cutting between them are two spans. Two
+  moments with nothing between them are ONE span. If the lecturer says what a
+  baseline is and then immediately says what happens if you get it wrong, that
+  is one span covering both — not two spans that play back to back with a
+  seamless join, which is the same thing described twice.
+- Never emit spans that touch or nearly touch. If your next start is within a
+  few seconds of your last end, you have split a continuous passage: merge it
+  and write one reason for the whole of it.
+- Cut often, because a lecture has a lot in it that is worth dropping — the
+  run-up, the repetition, the tangent, the pause. That is where the cuts come
+  from. It is not a reason to slice a continuous explanation into pieces.
 - Start on the point, not on its run-up. Cut the "so, um, what we're going to
   look at now is" and keep what follows.
 - Be exhaustive rather than selective. Go through in order and take everything
   that qualifies; a span you are unsure about goes in with a low score rather
   than being left out.
+
+FINISH THE SENTENCE
+
+Never end a span mid-sentence. The transcript is punctuated, so you can see
+where the sentence closes: end there, even if it costs a few more seconds than
+the point strictly needs. A cut that lands on "and the reason for that is—" is
+worse than one that runs two seconds long, however well chosen the span was.
+
+The same applies to a thought that finishes just past its sentence: if the very
+next line completes it, take it.
 
 COVERAGE — THE WHOLE LECTURE, NOT ITS MIDDLE
 
@@ -104,8 +121,8 @@ WHAT TO CUT
 
 IMPORTANCE
 
-Score every span 1 to 5. If the reel comes out longer than it was asked for, the
-lowest scores are dropped first, so the score is what protects the best material:
+Score every span 1 to 5. The score is how you say what matters most, and it is
+what decides the order things go if a reel ever has to be shortened:
 
   5  Without this, the lecture is not understood. The central definition, the
      key number, the idea the rest is built on, the thing that will be examined.
@@ -119,9 +136,26 @@ hundred spans that is ten, not forty.
 
 TIMES
 
-- Every start and end must be a time that appears in the transcript below.
-  Do not invent times, do not round, do not interpolate.
-- Times are MM:SS, or H:MM:SS past an hour.
+The transcript below is in blocks, each labelled with the time it starts and the
+time it ends: [12:30–12:41]. Both of those are real times you may use, and which
+one you use matters.
+
+- A span's start is the START of the first block you are keeping.
+- A span's end is the END of the last block you are keeping. Not the start of
+  the next block, and not the start of the last one — either of those cuts the
+  words you meant to keep. If the sentence you want finishes inside the block
+  ending 12:41, your end is 12:41.
+- Look at the space between one block's end and the next block's start. That
+  space is silence: a pause, a breath, the beat after a point lands. A cut that
+  falls in one of those is inaudible; a cut that falls where two blocks run
+  straight into each other lands on top of a word. When you have a choice
+  between two nearby boundaries, take the one with silence after it.
+- Where a sentence carries across the block boundary — the block's words stop
+  mid-clause and the next block finishes the thought — your end is the end of
+  the block that finishes it, not the one where the point was first made.
+- Do not invent times, do not round, do not interpolate.
+- Times are MM:SS, or H:MM:SS past an hour. Give start and end as separate
+  fields; do not put a range in either one.
 - Spans must not overlap, and must be in time order.
 
 REASONS
@@ -142,8 +176,9 @@ commentary.
   { "start": "18:05", "end": "18:27", "weight": 5, "why": "Gives the Value of Statistical Life as $12.5M NZD and where the figure comes from" }
 ]
 
-Note the shape of that example: short, adjacent, one claim each — not three
-chapters. Match it, at the length the brief asks for.
+Note the shape of that example: each span is a stretch worth keeping, and real
+lecture has been dropped between them — they are 24 and 13 minutes apart, not
+laid end to end. That is what a cut is.
 
 If the lecture genuinely contains nothing worth watching, return an empty array.
 That is a valid answer and a more useful one than a list of filler.

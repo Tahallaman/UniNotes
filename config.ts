@@ -708,6 +708,34 @@ export const DEFAULTS = {
      */
     minSegmentSeconds: 4,
     /**
+     * The one hard ceiling on a span, in seconds. A backstop, not a shape.
+     *
+     * Each preset used to have its own ceiling and spans were cut back to it,
+     * which is the sort of rule that sounds harmless and is not: the model had
+     * already decided where the point finished, and the cap overruled it on
+     * exactly the spans it mattered most for — the long ones, which are long
+     * because something was still being explained.
+     *
+     * So the preset's `maxSeconds` is now what the brief asks for and nothing
+     * enforces it. This is only here to stop one span swallowing a quarter of the
+     * lecture, which is a malfunction rather than an editorial choice.
+     */
+    maxSegmentSeconds: 180,
+    /**
+     * How far over its share a reel may run before anything is dropped, as a
+     * percentage of the share.
+     *
+     * The share is a brief, not a budget. Trimming to it means dropping spans the
+     * model chose in order to satisfy an arithmetic target it was only ever asked
+     * to aim at, and a reel that covers the lecture properly at 40% is a better
+     * reel than one cut to 25% by deleting its weakest third. Measured: with the
+     * coverage rule already putting most drops back, trimming was achieving
+     * almost nothing except unpredictability.
+     *
+     * So it only acts on a genuine overrun. 0 restores the old strict behaviour.
+     */
+    overrunAllowance: 60,
+    /**
      * Seconds of run-up before a span starts. Off.
      *
      * It was two, by analogy with the player's own seek lead-in — a boundary on
@@ -745,6 +773,38 @@ export const DEFAULTS = {
      * share still holds.
      */
     tailSeconds: 2,
+    /**
+     * How far a span may run on to reach the end of the sentence, in seconds.
+     *
+     * The run-out buys a beat; this buys the thought. A cue boundary is a breath,
+     * not a full stop, so snapping to one still cuts the lecturer off mid-clause
+     * — and watching a reel, that is the thing that reads as broken. The
+     * transcript is punctuated, so the end of the sentence is right there to be
+     * found: carry the span to the next cue whose text closes on `.`, `?` or `!`.
+     *
+     * Bounded because the alternative is a run-on paragraph with no full stop for
+     * half a minute, and a span should not silently become one. If no sentence
+     * ends within this many seconds the span stops where it was — better a hard
+     * cut than a span that swallowed the next point.
+     *
+     * 0 turns it off.
+     */
+    finishSentenceSeconds: 12,
+    /**
+     * Spans closer together than this are one span, in seconds.
+     *
+     * Three timestamps in a row with a second of silence between them are not
+     * three cuts — there is nothing being cut. They play as one continuous
+     * stretch, and reading them in the panel as separate entries with separate
+     * reasons is noise about a distinction the viewer cannot hear.
+     *
+     * The prompt asks for this too, and asking is the better half of the fix: the
+     * model splitting a continuous passage into three is a sign it is thinking in
+     * claims rather than in cuts. This is the backstop for when it does it anyway.
+     *
+     * 0 joins only spans that touch exactly.
+     */
+    joinGapSeconds: 3,
     /**
      * Transcript cues are merged into blocks of at least this many seconds
      * before being sent.
