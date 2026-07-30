@@ -744,11 +744,16 @@ function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string 
   const minutes = Math.max(1, Math.round(lectureSeconds / 60));
 
   const character: Record<PresetName, string> = {
-    skim: "A fast pass. Very short cuts, one after another, so that watching it "
-      + "start to finish tells the whole story of the lecture in a fraction of "
-      + "the time. Favour the sentence that states a thing over the sentence "
-      + "that explains it — but keep the few short connectives that hold the "
-      + "argument together, or it plays as a list of facts.",
+    skim: "The sharpest of the three, and the one where restraint matters most. "
+      + "Very short cuts — often a single sentence, ten or fifteen seconds — with "
+      + "a great deal of lecture dropped between them, so that watching it start "
+      + "to finish tells the whole story in a small fraction of the time. Favour "
+      + "the sentence that states a thing over the sentence that explains it, and "
+      + "when a point takes a minute to make, take the ten seconds where it "
+      + "lands rather than the minute. Keep the few short connectives that hold "
+      + "the argument together, or it plays as a list of facts. If a moment is "
+      + "merely useful rather than necessary, it belongs in one of the longer "
+      + "reels and not in this one.",
     highlights: "The everyday reel. Short and medium cuts, enough of each point "
       + "to land properly, and enough of them that nothing important is missing. "
       + "This is the one someone watches instead of the lecture, so it has to "
@@ -771,8 +776,9 @@ function brief(preset: PresetName, cfg: Preset, lectureSeconds: number): string 
     `  Go longer whenever the material needs it: a worked example that takes a minute to land is one`,
     `  span of a minute, not three of twenty seconds.`,
     `- Which should come to something like ${clockText(target)}, or ${cfg.share}% of this ${minutes}-minute`,
-    `  lecture. Running over is fine if the lecture earns it. A reel that covers the whole lecture`,
-    `  properly and runs long is better than one held to a percentage by leaving things out.`,
+    `  lecture. That figure is a recommendation and you may go past it where the material genuinely`,
+    `  earns it — but treat going a long way past it as a sign you have kept things you should have`,
+    `  cut, not as a lecture that happened to be dense. At double it, the reel has stopped being one.`,
     "",
     "Before you answer, read your list back as a reel — in order, with the gaps closed — and ask",
     "whether it tells the story of this lecture to someone who did not attend. Fix what it needs:",

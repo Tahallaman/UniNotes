@@ -49,6 +49,15 @@ separate span is the material you are dropping before the next one.
 - Cut often, because a lecture has a lot in it that is worth dropping — the
   run-up, the repetition, the tangent, the pause. That is where the cuts come
   from. It is not a reason to slice a continuous explanation into pieces.
+- Most of the lecture should end up on the floor. That is the job. Two moments
+  worth keeping usually have a minute of lecture between them that is not, and
+  cutting that minute out is the whole reason the reel exists. If your spans
+  are covering a third of the running time or more, you are not editing — you
+  are lightly abridging, and the result takes almost as long to watch as the
+  thing it replaces.
+- Where a span has a good half and a dull half, keep the good half. A span that
+  opens on the point and then runs into two sentences of aside should end
+  before the aside, not include it because the two are adjacent.
 - Start on the point, not on its run-up. Cut the "so, um, what we're going to
   look at now is" and keep what follows.
 - Be exhaustive rather than selective. Go through in order and take everything
@@ -106,18 +115,47 @@ WHAT TO KEEP
 - Why something exists, what it is for, or why the obvious approach fails.
 - Anything flagged as mattering: "this is examinable", "people always get this
   wrong", "this is the key idea".
+- Admin that changes what the listener has to DO: a deadline, a submission
+  format, a group-size rule, what is assessed and how, a warning, a constraint
+  they would be penalised for breaking. Keep the rule itself, in the sentence
+  where it is stated — not the discussion around it. "Groups of one are not
+  allowed" is the span. How the policy came about, who the lecturer asked about
+  it, what the university's reasoning is and how many people have signed up so
+  far are not, however long he spends on them.
 - A correction to something said earlier.
 - The answer to a question from the room, when it adds something new.
 - A conclusion, or the "so what this means is…" moment.
 
 WHAT TO CUT
 
-- Admin: deadlines, assignment logistics, room changes, marks.
-- A slide read aloud with nothing added.
+- The talk *around* a rule: the reasoning behind a policy, who was consulted,
+  how many people have registered so far, what the department thinks, what was
+  discussed in a meeting. The rule is worth ten seconds; its history is worth
+  none. This is the single biggest source of padding in a lecture's first
+  fifteen minutes, and it is usually the part the lecturer spends longest on.
+- A slide being shown, listed, or read out with nothing added. If the truest
+  reason you could write is "displays the X slide" or "presents the Y example",
+  there is no span there — the slide is not speech, and a viewer sees it in a
+  second. Six character profiles on six slides is not six spans.
+- An introduction to a thing, when the thing itself follows. "Now let's look at
+  Aibo" is not a span; the sentence where he says what is wrong with Aibo is.
 - Recaps of last week or of the last ten minutes.
 - Anecdotes, tangents and jokes, however good.
 - Dead air, setup, waiting for people, technical problems.
 - Repetition — if the same claim is made twice, keep the clearer one only.
+- A video being played. You cannot hear it and neither can the reel.
+
+THE REASON IS THE TEST
+
+Before you keep a span, write its reason, and then read it back as though it
+were the only thing you knew about that moment. If the reason is "introduces",
+"presents", "displays", "mentions", "discusses" or "talks about", you have found
+a moment where nothing is said — cut it. A span earns its place when its reason
+states something: a rule, a number, a definition, a cause, a consequence, a
+choice and why it was made.
+
+This is the most reliable filter you have. Apply it to every span before you
+answer, and delete the ones that fail it.
 
 IMPORTANCE
 
@@ -133,6 +171,11 @@ what decides the order things go if a reel ever has to be shortened:
 
 Do not give everything a 4. About a tenth of your spans should be 5s — with a
 hundred spans that is ten, not forty.
+
+And if you find yourself writing a 2 or a 1, stop and take it out instead. A
+score of 2 is you saying the span is marginal; a reel is not improved by
+material its own editor calls marginal. Scoring it low is not a way to include
+it safely — everything you return is in the reel and will be watched.
 
 TIMES
 
