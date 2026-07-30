@@ -675,6 +675,77 @@ the notes pipeline already does, so it is not a new exposure, but a button that
 fires on a text selection makes it easy to send something without having thought
 about it, and the settings and the dock both say so plainly.
 
+### Highlights
+
+The lecture cut down to the parts worth watching. One model call reads the
+transcript and the raw notes and returns *every* span worth watching, each scored
+1–5; the player then plays those spans back to back and skips the rest. Nothing
+is re-encoded — a reel is a list of times.
+
+**The call is made once and read three ways.** The model is never asked for "ten
+minutes of lecture". It returns two or three times more material than anyone
+wants to watch, and the presets cut it locally: Skim takes only the 5s, up to 10%
+of the lecture; Highlights takes 4 and up, to 25%; Deep takes 3 and up, to 45%.
+Switching between them is instant, offline and free, because the expensive
+judgement — *what is worth watching* — is separated from the cheap one, *how long
+have I got*, and only the first ever goes to a model.
+
+Two rules per preset, not one, and the pairing is the point. The **share** adapts
+where a number of minutes cannot: ten minutes is most of a 25-minute lab and
+nothing of a two-hour lecture. The **floor** stops a preset padding itself out to
+fill that share — a mostly-admin lecture yields a two-minute Deep, because there
+were only two minutes' worth in it, and that is the right answer rather than a
+failure to find more. The share is a ceiling, never a quota; nothing is ever
+included to reach it.
+
+**The reel is saved beside the notes**, as `highlights.json` in the lecture's own
+folder. That is load-bearing rather than an optimisation: the transcript it was
+built from lives in the video cache, which is emptied every time the panel starts
+*and* stops, so an unsaved reel would die with the session that made it and cost
+another call the next morning.
+
+**Why the times can be trusted.** The model is only allowed to name times that
+appear in the transcript it was given, and every boundary it returns is snapped
+back to a real cue boundary in `src/gui/highlights.ts` — a start to the cue
+covering it, an end to the end of its cue. A model that invents 07:41 gets the
+cue that actually starts at 07:38, so a span cannot open mid-word. The transcript
+is sent as ten-second paragraphs rather than as breath-length cues, which costs
+nothing in precision for exactly this reason and turns a thousand fragments into
+something both cheaper and more readable. Everything else is validated too:
+inside the recording, longer than the floor, in order, non-overlapping — and an
+overlap keeps the stronger span rather than merging, because a merged span would
+carry a reason describing only half of itself. `scripts/test-highlights.ts` pins
+all of it, since every one of these failures is silent.
+
+**It lives in the dock, not in a notes tab.** A fourth notes tab was the first
+instinct and it is wrong: the notes pane is the one thing that has to stay
+visible while the reel plays, and a contents page you can only read by hiding the
+lecture is not a contents page. So the dock under the video gained a tab strip.
+The two tabs answer different questions — Explain answers *what does this mean*,
+Highlights answers *where should I be looking* — and keep different things: the
+conversation is thrown away when the drawer closes, the reel is on disk.
+
+**One button, two jobs.** Without a reel, Highlights builds one; with a reel, it
+plays it. Building runs in the background with a line of toast, because thinking
+level high over a whole transcript is the better part of a minute and the thing
+it would block is a lecture you can watch meanwhile. It sits past the gap in the
+player bar, with Explain — that gap means "these send something to Google", and
+this sends the most of anything here.
+
+The **reel bar** under the video draws the chosen spans against the whole
+lecture, to scale. Without it the reel is invisible magic and you cannot tell one
+that covered the lecture from one that quietly dropped the second half. Blocks
+seek; the strip showing through between them is what you are skipping. The list
+in the panel shows every candidate, including the ones this preset dropped, greyed
+— seeing what was left out is how you decide whether Deep is worth reaching for.
+
+**Taking over, and what counts as taking over.** Playback advances when a span
+*ends*. A seek that isn't ours turns the steering off — the same convention as
+scrolling turning Following off — with one exception: a seek that lands *inside*
+a chosen span keeps the reel on and re-lands the index. The arrow keys exist to
+nudge past a slow explanation, and killing the reel for that would make the two
+features fight.
+
 ### Tab 3 — Settings
 
 Rendered from a schema (`src/settings/schema.ts`) rather than hand-written HTML, so

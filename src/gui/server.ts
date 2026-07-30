@@ -42,6 +42,7 @@ import {
 import { destinationFor, lectureNumbersByCourse, validateTerms } from "../notes/organise.js";
 import { serveVideo, serveCaptions } from "./video.js";
 import { explain, ExplainUnavailableError } from "./explain.js";
+import { buildHighlights, getHighlights, HighlightsUnavailableError } from "./highlights.js";
 import {
   listTasks,
   createTask,
@@ -594,6 +595,28 @@ async function handleApi(
       sendJson(res, 200, {
         message: date === null ? "Date cleared — worked out from the recording again." : `Date set to ${date}.`,
       });
+      return;
+    }
+
+    // Free and offline: the saved reel, already cut three ways. Switching preset
+    // in the panel costs nothing because the model was consulted once, when the
+    // reel was built, and never again.
+    case "GET /api/highlights":
+      sendJson(res, 200, getHighlights(query.get("key") ?? ""));
+      return;
+
+    // The costed one. Minutes at thinking level high, which is why the page
+    // fires it and carries on rather than waiting on it.
+    case "POST /api/highlights/build": {
+      try {
+        sendJson(res, 200, await buildHighlights(body));
+      } catch (err) {
+        if (err instanceof HighlightsUnavailableError) {
+          sendJson(res, 503, { error: err.message });
+          return;
+        }
+        throw err;
+      }
       return;
     }
 

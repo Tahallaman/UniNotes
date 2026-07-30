@@ -253,6 +253,14 @@
                still fires cuechange but draws nothing — see setSubtitles(). -->
           <div id="player-cues" class="player-cues" aria-hidden="true" hidden></div>
         </div>
+        <!-- The reel, drawn against the whole lecture. It exists to be honest
+             about what is being skipped: without it you can't tell a reel that
+             covered the lecture from one that quietly dropped the second half.
+             Each block seeks to its span. -->
+        <div id="reel-bar" class="reel-bar" hidden>
+          <div id="reel-blocks" class="reel-blocks" aria-label="Highlights, drawn against the whole lecture"></div>
+          <p id="reel-why" class="reel-why"></p>
+        </div>
         <div class="player-bar">
           <div class="player-bar-groups">
           <div class="player-bar-actions" role="group" aria-label="Player controls">
@@ -301,9 +309,17 @@
             </button>
           </div>
           <!-- Its own group, set slightly apart: everything to the left is about
-               how the notes behave and costs nothing to press. These two send a
-               question to Google. -->
-          <div class="player-bar-actions" role="group" aria-label="Explain">
+               how the notes behave and costs nothing to press. These send
+               something to Google. -->
+          <div class="player-bar-actions" role="group" aria-label="Ask the model">
+            <button id="player-highlights" class="chip-btn" type="button" aria-pressed="false"
+                    title="Play only the parts of this lecture worth watching">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6.4 1.8 7.6 4.9l3.1 1.2-3.1 1.2-1.2 3.1-1.2-3.1L2.1 6.1l3.1-1.2z"/>
+                <path d="M11.8 9.2l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z"/>
+              </svg>
+              <span class="chip-label">Highlights</span>
+            </button>
             <button id="player-explain" class="chip-btn" type="button"
                     title="Ask about what's being covered at this point">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -334,9 +350,18 @@
              every time you switched back to Pretty. Collapsed until first use. -->
         <div id="explain-split" class="explain-split" role="separator" aria-orientation="horizontal"
              tabindex="0" aria-label="Resize the Explain panel" title="Drag to resize" hidden></div>
-        <section id="explain-dock" class="explain-dock" hidden aria-label="Explain">
+        <!-- Two tabs rather than two panels: they answer different questions
+             about the same lecture — Explain answers "what does this mean",
+             Highlights answers "where should I be looking" — and neither can
+             have the notes column, which has to stay readable while the reel
+             plays. What each tab keeps differs: the conversation is thrown away
+             when the drawer closes, the reel is saved beside the notes. -->
+        <section id="explain-dock" class="explain-dock" hidden data-tab="explain" aria-label="Explain and Highlights">
           <header class="explain-head">
-            <h3>Explain</h3>
+            <div class="dock-tabs" role="tablist">
+              <button id="dock-tab-explain" class="dock-tab current" type="button" role="tab" aria-selected="true">Explain</button>
+              <button id="dock-tab-highlights" class="dock-tab" type="button" role="tab" aria-selected="false">Highlights</button>
+            </div>
             <div class="explain-head-actions">
               <!-- Once per conversation. Sending 25 KB with every question is
                    slow and buries what you asked about; a question that spans
@@ -345,7 +370,7 @@
               <button id="explain-whole" class="link-btn" type="button"
                       title="Include the whole lecture's notes with your next question">Send the whole lecture</button>
               <button id="explain-clear" class="link-btn" type="button">Clear</button>
-              <button id="explain-close" class="icon-btn" type="button" aria-label="Close Explain">
+              <button id="explain-close" class="icon-btn" type="button" aria-label="Close the panel">
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
                   <path d="M4 4l8 8M12 4l-8 8"/>
                 </svg>
@@ -357,6 +382,21 @@
             <input id="explain-input" class="field" type="text" autocomplete="off"
                    placeholder="Ask a follow-up…" aria-label="Ask a follow-up">
             <button id="explain-send" class="btn" type="submit">Ask</button>
+          </form>
+
+          <!-- The three presets cut the same saved candidates three ways, so
+               switching between them is a local array swap: free, instant, and
+               no second call. The box below is the costed one. -->
+          <div id="reel-list" class="reel-list" hidden></div>
+          <div id="reel-presets" class="reel-presets" role="group" aria-label="How much to watch" hidden>
+            <button class="reel-preset" data-preset="skim" type="button">Skim<span class="reel-len"></span></button>
+            <button class="reel-preset" data-preset="highlights" type="button">Highlights<span class="reel-len"></span></button>
+            <button class="reel-preset" data-preset="deep" type="button">Deep<span class="reel-len"></span></button>
+          </div>
+          <form id="reel-form" class="explain-ask" hidden>
+            <input id="reel-input" class="field" type="text" autocomplete="off"
+                   placeholder="Rebuild, focusing on…" aria-label="Rebuild the highlights with an instruction">
+            <button id="reel-build" class="btn" type="submit">Build</button>
           </form>
         </section>
       </section>

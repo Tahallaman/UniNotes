@@ -1,0 +1,90 @@
+You are choosing which parts of a recorded lecture are worth watching.
+
+The student already has written notes for this lecture. They are not asking what
+was said — they can read that. They are asking where watching beats reading:
+where an idea gets built in front of you, where a worked example goes wrong and
+gets fixed, where the lecturer says the thing that makes it click.
+
+Your job is to find every such span and mark where it starts and ends.
+
+WHAT TO KEEP
+
+- An idea being built: a derivation, a proof, a diagram drawn while talking, a
+  model assembled a piece at a time.
+- Worked examples, especially ones with a wrong turn that gets corrected.
+- Why something exists, what it is for, or why the obvious approach fails.
+- Anything flagged as mattering: "this is examinable", "people always get this
+  wrong", "this is the key idea".
+- A correction to something said earlier in the lecture.
+- An answer to a question from the room that adds something the lecture had not
+  already said.
+
+WHAT TO CUT
+
+- Admin: deadlines, assignment logistics, room and timetable changes, marks.
+  These belong in the notes, not in the student's ears.
+- A slide read aloud with nothing added.
+- Recaps — of last week, or of the last ten minutes.
+- Anecdotes, asides and tangents, however good.
+- Dead air, setup, waiting for people, technical problems.
+- Questions from the room whose answer repeats what was just said.
+
+THE SHAPE OF A SPAN
+
+- It begins where a thought begins and ends where that thought is finished. Not
+  a sentence, not a slide, not a fixed length.
+- Roughly 45 seconds to 4 minutes. Under 30 seconds is not a span, it is a jump
+  cut, and a reel of those is unwatchable. If two good moments are less than
+  half a minute apart, make them one span.
+- Start slightly early rather than slightly late. Landing mid-sentence is worse
+  than hearing five seconds of run-up.
+
+COVERAGE
+
+Work through the whole lecture. A lecture has an arc, and five spans from the
+first fifteen minutes is a failure however good they are. If a section of the
+lecture genuinely contains nothing worth watching, leave it out — a thin lecture
+should produce a short list, and padding it is the worst thing you can do here.
+
+IMPORTANCE
+
+Score every span 1 to 5. The score is what decides whether it survives into a
+short reel, so spread the range and mean it:
+
+  5  Without this, the lecture is not understood. The central derivation, the
+     idea the rest is built on, the thing that will be examined.
+  4  Substantial. A worked example, a second key idea, the answer to the
+     question a careful student would have.
+  3  Worth watching if there is room. Useful detail, a good aside on method.
+  2  Marginal. Watch only if watching almost all of it.
+  1  Barely worth it. Prefer to leave it out entirely.
+
+Do not give everything a 4. If more than about a third of your spans are 5s, you
+have not chosen.
+
+TIMES
+
+- Every start and end must be a time that appears in the transcript below.
+  Do not invent times, do not round, do not interpolate.
+- Times are MM:SS, or H:MM:SS past an hour.
+- Spans must not overlap, and must be in time order.
+
+REASONS
+
+One line per span saying what happens in it, concretely enough to be worth
+reading on its own. "Derives the two-bit saturating counter and shows why one
+bit thrashes" is useful. "Important concept" and "the lecturer explains the
+material" are not — they say nothing the timestamp did not.
+
+OUTPUT
+
+Return JSON and nothing else. No prose before or after, no code fence, no
+commentary.
+
+[
+  { "start": "04:12", "end": "07:40", "weight": 5, "why": "Derives the two-bit saturating counter and shows why one bit thrashes on a loop" },
+  { "start": "18:05", "end": "20:31", "weight": 3, "why": "Works the branch-history example on the board, including the off-by-one he corrects" }
+]
+
+If the lecture genuinely contains nothing worth watching, return an empty array.
+That is a valid answer and a more useful one than a list of filler.

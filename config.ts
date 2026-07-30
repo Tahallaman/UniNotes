@@ -344,6 +344,14 @@ export const DEFAULTS = {
      * appended by src/gui/explain.ts.
      */
     explain: promptFile("explain.txt"),
+    /**
+     * How the highlights are chosen. This one *is* parsed — src/gui/highlights.ts
+     * reads back a JSON array of spans — so the output section at the end of it
+     * is load-bearing in a way the rest of the file isn't. Everything above that
+     * (what counts as worth watching, how to score it) is the part worth tuning,
+     * and it is where the quality of the whole feature lives.
+     */
+    highlights: promptFile("highlights.txt"),
   },
 
   /** Course code extraction — tried in order, first match wins */
@@ -567,6 +575,89 @@ export const DEFAULTS = {
      * What dragging its top edge records, the same way player.notesWidth is.
      */
     dockHeight: 0,
+  },
+
+  /**
+   * Highlights — the lecture cut down to the parts worth watching.
+   *
+   * One model call reads the transcript and the raw notes and returns every span
+   * worth watching, each scored 1–5. What you then watch is chosen from those
+   * candidates locally, by preset, which is why switching between Skim and Deep
+   * costs nothing: the expensive judgement (what is worth watching) is separated
+   * from the cheap one (how long have I got), and only the first goes to a model.
+   *
+   * The result is written beside the lecture's notes. That is load-bearing, not
+   * an optimisation: the transcript it was built from lives in the video cache,
+   * which is emptied every time the panel starts and stops, so an unsaved reel
+   * would die with the session that made it.
+   */
+  highlights: {
+    enabled: true as boolean,
+    /** Same model as everything else here; the thinking level is what differs. */
+    model: "gemini-3.6-flash",
+    /**
+     * High, unlike Explain's minimal — and for the opposite reason.
+     *
+     * This is a judgement call over a whole lecture, made once, whose output you
+     * will trust enough to skip forty minutes on. Explain is minimal because you
+     * are sitting there waiting for a definition; nobody is sitting waiting for
+     * this, because it runs in the background while you carry on watching.
+     */
+    thinkingLevel: "high" as "minimal" | "low" | "medium" | "high" | undefined,
+    /** Twenty-odd spans of JSON. Generous — an exhausted budget returns nothing. */
+    maxOutputTokens: 16_384,
+    /** Minutes, not seconds: thinking hard about an hour of transcript is slow. */
+    timeoutSeconds: 300,
+    /**
+     * The three presets, as an importance floor and a share of the lecture.
+     *
+     * Two rules rather than one, and the pairing is the point. The **share**
+     * adapts where a fixed number of minutes cannot — ten minutes is most of a
+     * 25-minute lab and nothing of a two-hour lecture. The **floor** is what
+     * stops a preset padding itself out to fill its share: a lecture that was
+     * mostly admin yields a two-minute Deep, because there were only two
+     * minutes' worth in it.
+     *
+     * So the share is a ceiling, never a quota. Nothing is included to reach it.
+     *
+     * Shares are percentages rather than fractions so that each one is a plain
+     * integer in Settings; a text box holding 0.25 is a text box someone will
+     * eventually type 25 into.
+     */
+    presets: {
+      skim: { minWeight: 5, share: 10 },
+      highlights: { minWeight: 4, share: 25 },
+      deep: { minWeight: 3, share: 45 },
+    },
+    /** Shorter than this isn't a span, it's a jump cut. Applied after snapping. */
+    minSegmentSeconds: 30,
+    /**
+     * Seconds of run-up before a span starts.
+     *
+     * The same reasoning as the player's own seek lead-in: a boundary that lands
+     * exactly on the first word puts you a beat after the sentence that set it
+     * up. Snapped back to a real cue boundary afterwards, so it never cuts into
+     * a word.
+     */
+    leadInSeconds: 3,
+    /**
+     * Transcript cues are merged into blocks of at least this many seconds
+     * before being sent.
+     *
+     * An auto-transcript breaks on breath — a cue every two or three seconds —
+     * so a lecture arrives as a thousand fragments, which is both expensive and
+     * harder to read than the same words in paragraphs. Ten seconds keeps the
+     * anchors dense enough to choose boundaries by, and the model's choice is
+     * snapped back to a real cue afterwards, so the merge costs no precision.
+     */
+    blockSeconds: 10,
+    /**
+     * Hard ceiling on what is assembled and sent, in characters.
+     *
+     * A backstop rather than a dial. A three-hour recording with a verbose
+     * transcript must not turn one press into a very large bill.
+     */
+    maxContextChars: 300_000,
   },
 
   /** Vertex AI (Google Cloud) settings — used by the "api" uploader mode */

@@ -1551,6 +1551,20 @@ function setupPlayer(entry, play) {
   const explainOff = state.settings.values["explain.enabled"] === false;
   document.getElementById("player-explain").hidden = explainOff;
   document.getElementById("player-explain-open").hidden = explainOff;
+
+  // Same treatment for the same reason: a button that names what to configure
+  // is more use than one that quietly isn't there. Whatever was saved for this
+  // lecture is fetched now, so the button knows whether it is a build or a play
+  // before you press it.
+  const reelOff = state.settings.values["highlights.enabled"] === false;
+  document.getElementById("player-highlights").hidden = reelOff;
+  if (!reelOff) loadReel(entry.key);
+
+  // A tab strip is only a tab strip while both tabs exist. With one feature
+  // switched off the dock goes back to being the other one, named.
+  document.getElementById("dock-tab-explain").hidden = explainOff;
+  document.getElementById("dock-tab-highlights").hidden = reelOff;
+  dockTab(explainOff && !reelOff ? "highlights" : "explain");
   // The conversation belongs to this lecture from the moment it opens, not from
   // the first question. Set lazily, arming "send the whole lecture" before
   // asking anything looked like a fresh lecture and cleared itself.
@@ -1725,7 +1739,17 @@ function teardownPlayer() {
   cueBox.replaceChildren();
   document.getElementById("player-explain").hidden = true;
   document.getElementById("player-explain-open").hidden = true;
+  document.getElementById("player-highlights").hidden = true;
   document.getElementById("player-pane").hidden = true;
+
+  // The reel goes with the lecture, like the conversation does. The file stays
+  // on disk; this is only what's on screen.
+  setReelOn(false, { silent: true });
+  reel.key = null;
+  reel.payload = null;
+  reel.index = -1;
+  reelBar.hidden = true;
+  dockTab("explain");
 
   // The conversation goes with the lecture. It only ever lived here, and it was
   // about where you were in a recording you have now closed.
@@ -1752,6 +1776,7 @@ videoEl.addEventListener("timeupdate", () => {
   document.getElementById("player-clock").textContent = clockText(videoEl.currentTime);
   highlightAt(videoEl.currentTime);
   saveProgress();
+  followReel();
 });
 
 // ── Where you got to ─────────────────────────────────────────────────────────
@@ -2234,6 +2259,8 @@ async function askExplain({ question = "", selection = "", at = null } = {}) {
   }
 
   explainOpen(true);
+  // An answer arriving behind the other tab would look like nothing happened.
+  dockTab("explain");
   const shown = selection
     ? `Explain this:\n\n${selection}${question ? `\n\n${question}` : ""}`
     : question || "Explain what's being covered here.";
@@ -2407,6 +2434,383 @@ document.addEventListener("selectionchange", () => {
   // Not while the pointer is on the button: pressing it is itself what collapses
   // the selection, and reacting to that would hide the button mid-click.
   if (!explainPop.hidden && !explainPop.matches(":hover") && !notesSelection()) hideExplainPop();
+});
+
+// ── Highlights ───────────────────────────────────────────────────────────────
+
+/**
+ * The lecture cut down to the parts worth watching.
+ *
+ * The server holds the judgement: one call scored every span 1–5, and the saved
+ * reel comes back already cut three ways. So everything here is presentation and
+ * playback — switching preset is picking a different array that arrived with the
+ * same response, which is why it costs nothing and works offline.
+ */
+const reel = {
+  /** The lecture `payload` belongs to, so another one can't inherit it. */
+  key: null,
+  /** { reel, picks: { skim, highlights, deep }, unavailable } or null. */
+  payload: null,
+  preset: "highlights",
+  /** Whether playback is being steered by the reel. */
+  on: false,
+  /** Index into the current pick's segments, or -1. */
+  index: -1,
+  busy: false,
+  /**
+   * Where we last seeked to ourselves.
+   *
+   * Advancing to the next span *is* a seek, and the handler that watches for you
+   * taking over must not read our own jump as yours. Matched by position rather
+   * than by a timer: the seeking event can arrive a frame or several later, and
+   * a window wide enough to cover that is wide enough to swallow a real one.
+   */
+  seekTo: -1,
+};
+
+const dockEl = document.getElementById("explain-dock");
+const reelBar = document.getElementById("reel-bar");
+
+/** The pick being played, which is the empty one until a reel is loaded. */
+function reelPick() {
+  return reel.payload?.picks?.[reel.preset] ?? { seconds: 0, segments: [] };
+}
+
+function reelSegments() {
+  return reelPick().segments;
+}
+
+/**
+ * Show one of the dock's two tabs.
+ *
+ * The head actions belong to Explain — "send the whole lecture" means nothing to
+ * a reel — so they go with it rather than sitting there greyed out.
+ */
+function dockTab(which) {
+  dockEl.dataset.tab = which;
+  for (const [id, name] of [["dock-tab-explain", "explain"], ["dock-tab-highlights", "highlights"]]) {
+    const tab = document.getElementById(id);
+    tab.classList.toggle("current", name === which);
+    tab.setAttribute("aria-selected", String(name === which));
+  }
+  const onExplain = which === "explain";
+  explainLog.hidden = !onExplain;
+  document.getElementById("explain-form").hidden = !onExplain;
+  document.getElementById("explain-whole").hidden = !onExplain;
+  document.getElementById("explain-clear").hidden = !onExplain;
+  document.getElementById("reel-list").hidden = onExplain;
+  document.getElementById("reel-presets").hidden = onExplain;
+  document.getElementById("reel-form").hidden = onExplain;
+  if (!onExplain) renderReel();
+}
+
+document.getElementById("dock-tab-explain").addEventListener("click", () => dockTab("explain"));
+document.getElementById("dock-tab-highlights").addEventListener("click", () => {
+  explainOpen(true);
+  dockTab("highlights");
+});
+
+/**
+ * Fetch whatever is saved for this lecture. Free — no model is consulted.
+ *
+ * Failure is silent by design: a lecture with no reel is the ordinary case, and
+ * the panel says what to do about it when you open it.
+ */
+async function loadReel(key) {
+  reel.key = key;
+  reel.payload = null;
+  try {
+    reel.payload = await get(`/api/highlights?key=${encodeURIComponent(key)}`);
+  } catch {
+    reel.payload = null;
+  }
+  if (reel.key !== key) return;
+  renderReel();
+  renderReelBar();
+}
+
+/** "9:40 of 51:12" — what this preset would actually cost you to watch. */
+function reelLengths() {
+  for (const button of document.querySelectorAll(".reel-preset")) {
+    const pick = reel.payload?.picks?.[button.dataset.preset];
+    button.querySelector(".reel-len").textContent = pick ? clockText(pick.seconds) : "—";
+    button.setAttribute("aria-pressed", String(button.dataset.preset === reel.preset));
+    button.disabled = !reel.payload?.reel;
+  }
+}
+
+function renderReel() {
+  reelLengths();
+  const list = document.getElementById("reel-list");
+  const form = document.getElementById("reel-form");
+  const saved = reel.payload?.reel ?? null;
+
+  if (reel.busy) {
+    list.replaceChildren(el("p", {
+      class: "explain-idle",
+      text: "Reading the lecture… this takes a minute, and you can carry on watching.",
+    }));
+    form.hidden = true;
+    return;
+  }
+  form.hidden = dockEl.dataset.tab !== "highlights";
+
+  if (!saved) {
+    list.replaceChildren(el("p", {
+      class: "explain-idle",
+      text: reel.payload?.unavailable
+        || "No highlights for this lecture yet. Press Highlights to find the parts worth watching.",
+    }));
+    return;
+  }
+
+  // By start time, not by object identity: the picks arrive as their own copies
+  // of the same spans, so `chosen.has(segment)` on the objects would never be
+  // true. Starts are unique — the server drops overlaps — so they are a key.
+  const chosen = new Set(reelSegments().map((s) => s.start));
+  const playingAt = reelSegments()[reel.index]?.start;
+
+  // Every candidate, not just the chosen ones — greying out what this preset
+  // dropped is how you tell whether Deep is worth reaching for. Ordered by time,
+  // because that is the only order a lecture has.
+  const nodes = saved.segments.slice().sort((a, b) => a.start - b.start).map((segment) => {
+    const item = el("button", { class: "reel-item", type: "button" });
+    if (!chosen.has(segment.start)) item.classList.add("out");
+    if (segment.start === playingAt) item.classList.add("on");
+    item.append(
+      el("span", { class: "ts", text: clockText(segment.start) }),
+      el("span", { class: "reel-text", text: segment.why }),
+      el("span", { class: "reel-weight", text: "•".repeat(segment.weight) }),
+    );
+    item.title = `${clockText(segment.start)}–${clockText(segment.end)} · scored ${segment.weight}/5`
+      + (chosen.has(segment.start) ? "" : " · not in this preset");
+    item.addEventListener("click", () => playSegment(segment));
+    return item;
+  });
+
+  const made = saved.madeAt ? new Date(saved.madeAt) : null;
+  nodes.push(el("p", {
+    class: "explain-sent",
+    text: `${saved.segments.length} spans, from ${saved.model}`
+      + (made && !Number.isNaN(made.getTime()) ? ` on ${made.toLocaleDateString()}` : "")
+      + (saved.steer ? ` · asked for: ${saved.steer}` : ""),
+  }));
+  list.replaceChildren(...nodes);
+}
+
+/** The reel drawn against the whole lecture, to scale. */
+function renderReelBar() {
+  const saved = reel.payload?.reel ?? null;
+  const length = saved?.lectureSeconds ?? 0;
+  reelBar.hidden = !player.active || !saved || length <= 0;
+  if (reelBar.hidden) return;
+
+  const segments = reelSegments();
+  document.getElementById("reel-blocks").replaceChildren(...segments.map((segment, i) => {
+    const block = el("button", { class: "reel-block", type: "button" });
+    block.style.left = `${(segment.start / length) * 100}%`;
+    block.style.width = `${Math.max(0.4, ((segment.end - segment.start) / length) * 100)}%`;
+    if (i === reel.index) block.classList.add("on");
+    block.title = `${clockText(segment.start)} — ${segment.why}`;
+    block.addEventListener("click", () => playSegment(segment));
+    return block;
+  }));
+
+  const current = segments[reel.index];
+  document.getElementById("reel-why").textContent = reel.on && current
+    ? `${reel.index + 1} of ${segments.length} · ${current.why}`
+    : segments.length > 0
+      ? `${segments.length} spans · ${clockText(reelPick().seconds)} of ${clockText(length)}`
+      : "";
+}
+
+/** Our own seek, marked as ours so it isn't read as you taking over. */
+function reelSeek(seconds) {
+  reel.seekTo = seconds;
+  videoEl.currentTime = seconds;
+}
+
+function setReelIndex(index) {
+  reel.index = index;
+  renderReelBar();
+  if (dockEl.dataset.tab === "highlights" && !dockEl.hidden) renderReel();
+}
+
+/**
+ * Jump to one span from the list or the bar.
+ *
+ * A span this preset dropped is still a real place in the lecture, so clicking
+ * it goes there — and stops the steering, because leaving the reel to yank you
+ * onwards at the end of a span you deliberately left is the reel fighting you.
+ *
+ * Either way the video isn't started. A paused lecture stays paused, the same as
+ * clicking a note does.
+ */
+function playSegment(segment) {
+  const index = reelSegments().findIndex((s) => s.start === segment.start);
+  if (index < 0) {
+    setReelOn(false, { silent: true });
+    videoEl.currentTime = segment.start;
+    return;
+  }
+  setReelOn(true, { silent: true, at: index });
+}
+
+/**
+ * Turn the reel's steering on or off.
+ *
+ * Turning it on lands you in the nearest span rather than starting again from
+ * the top: you pressed it part-way through a lecture, and being thrown back to
+ * the beginning is not what "play the good bits" means. Playback state is left
+ * alone — a paused video stays paused.
+ */
+function setReelOn(on, { silent = false, at = -1 } = {}) {
+  const segments = reelSegments();
+  if (on && segments.length === 0) return;
+  const was = reel.on;
+  reel.on = on;
+  const button = document.getElementById("player-highlights");
+  button.setAttribute("aria-pressed", String(on));
+  button.classList.toggle("on", on);
+
+  if (!on) {
+    reel.index = -1;
+    renderReelBar();
+    if (was && !silent) toast("Highlights off — playing the whole lecture again.");
+    return;
+  }
+
+  // Already steering and nowhere particular to go: leave it where it is.
+  if (was && at < 0) return;
+
+  const t = videoEl.currentTime;
+  const inside = segments.findIndex((s) => t >= s.start && t < s.end);
+  const next = segments.findIndex((s) => s.start > t);
+  const index = at >= 0 ? at : inside >= 0 ? inside : next >= 0 ? next : 0;
+  setReelIndex(index);
+  // Only when you aren't already inside it: turning the reel on part-way through
+  // a good span shouldn't restart the span you're listening to.
+  if (at >= 0 || inside < 0) reelSeek(segments[index].start);
+  if (dockEl.dataset.tab === "highlights" && !dockEl.hidden) renderReel();
+}
+
+/**
+ * Move the video along the reel as each span finishes.
+ *
+ * Driven by timeupdate rather than by a timer, so it survives pausing, scrubbing
+ * and a video that buffers — the only thing that advances it is the picture
+ * actually reaching the end of a span.
+ */
+function followReel() {
+  if (!reel.on) return;
+  const segments = reelSegments();
+  const current = segments[reel.index];
+  if (!current) return;
+  if (videoEl.currentTime < current.end) return;
+
+  if (reel.index + 1 >= segments.length) {
+    // The end of the reel is the end of watching, not a jump back to the top.
+    videoEl.pause();
+    setReelOn(false, { silent: true });
+    toast(`That's the reel — ${clockText(reelPick().seconds)} of ${clockText(reel.payload.reel.lectureSeconds)}.`);
+    return;
+  }
+  setReelIndex(reel.index + 1);
+  reelSeek(segments[reel.index].start);
+}
+
+/**
+ * A seek that wasn't ours means you've taken over — sometimes.
+ *
+ * Landing inside a span you're already watching is a nudge within the reel, not
+ * a departure from it: the arrow keys exist for exactly that, and killing the
+ * reel because you skipped fifteen seconds of a slow explanation would make the
+ * two features fight. Landing in the middle of what the reel skipped is the real
+ * signal, and that turns the steering off.
+ */
+videoEl.addEventListener("seeking", () => {
+  if (!reel.on) return;
+  const t = videoEl.currentTime;
+  if (Math.abs(t - reel.seekTo) < 0.75) return;
+  reel.seekTo = -1;
+
+  const inside = reelSegments().findIndex((s) => t >= s.start && t < s.end);
+  if (inside >= 0) { setReelIndex(inside); return; }
+  setReelOn(false);
+});
+
+/**
+ * Build a reel. The one thing here that spends a call.
+ *
+ * Fired and left to run: at thinking level high over a whole transcript this is
+ * the better part of a minute, and blocking the player for it would be absurd
+ * when the thing you'd be blocking is a lecture you can watch meanwhile.
+ */
+const buildReel = guard(async (steer = "") => {
+  if (reel.busy || !state.drawerKey) return;
+  const key = state.drawerKey;
+  reel.busy = true;
+  renderReel();
+  toast(steer
+    ? "Rebuilding the highlights with that in mind — carry on watching."
+    : "Reading the lecture for its highlights — this takes a minute. Carry on watching.");
+
+  try {
+    const payload = await post("/api/highlights/build", { key, steer });
+    // The drawer may have moved on while it was thinking. The file is saved
+    // either way, so the work isn't lost — it just isn't what's on screen.
+    if (state.drawerKey !== key) return;
+    reel.payload = payload;
+    reel.index = -1;
+    toast(`Highlights ready — ${payload.reel.segments.length} spans found.`);
+    explainOpen(true);
+    dockTab("highlights");
+    renderReelBar();
+  } finally {
+    reel.busy = false;
+    if (state.drawerKey === key) renderReel();
+  }
+});
+
+/**
+ * One button, two jobs, and which one it is doing is the state it's in.
+ *
+ * Without a reel it builds one; with a reel it plays it. That is one press for
+ * the thing you actually wanted in both cases, and the label says which.
+ */
+document.getElementById("player-highlights").addEventListener("click", () => {
+  if (reel.busy) return;
+  if (!reel.payload?.reel) {
+    if (reel.payload?.unavailable) { toast(reel.payload.unavailable, "bad"); return; }
+    buildReel("");
+    return;
+  }
+  setReelOn(!reel.on);
+  // If the panel is already open it follows what you're doing; if it isn't,
+  // turning the reel on is not a reason to take a third of the video away.
+  if (reel.on && !dockEl.hidden) dockTab("highlights");
+});
+
+document.getElementById("reel-presets").addEventListener("click", (event) => {
+  const button = event.target.closest(".reel-preset");
+  if (!button) return;
+  reel.preset = button.dataset.preset;
+  // Re-landed rather than left where it was: the span you were on may not be in
+  // this preset at all, and the index is a position in *this* list.
+  const t = videoEl.currentTime;
+  const segments = reelSegments();
+  const inside = segments.findIndex((s) => t >= s.start && t < s.end);
+  reel.index = reel.on ? (inside >= 0 ? inside : Math.max(0, segments.findIndex((s) => s.start > t))) : -1;
+  renderReel();
+  renderReelBar();
+});
+
+document.getElementById("reel-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = document.getElementById("reel-input");
+  const steer = input.value.trim();
+  input.value = "";
+  buildReel(steer);
 });
 
 // ── The dock's height ────────────────────────────────────────────────────────
