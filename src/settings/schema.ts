@@ -325,6 +325,15 @@ export const SETTING_FIELDS: readonly SettingField[] = [
     max: 120,
     help: "How far ← and → move the video while you're watching.",
   },
+  {
+    path: "player.watchedAt",
+    label: "Counts as watched at (%)",
+    group: "Player",
+    type: "int",
+    min: 50,
+    max: 100,
+    help: "Getting this far through ticks the Watched box for you. 100 waits for the very end.",
+  },
 
   // ── Explain ─────────────────────────────────────────────────────────────
   {

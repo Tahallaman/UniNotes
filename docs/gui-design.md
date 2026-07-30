@@ -182,10 +182,32 @@ download buys you a video in a panel, which the Panopto link already gives you.
 The rule is enforced in `scripts/fetch-video.ts` as well as in the cell, since
 that script takes ids from a file.
 
-The last column is a **Watched** tick you set yourself. It is stored on the lecture
-row and is the one thing in the library the pipeline never writes — so it does not
-bump `updated_at`, which would otherwise reorder the list every time you ticked one.
+The last column is a **Watched** tick. It is stored on the lecture row and is the
+one thing in the library the pipeline never writes — so it does not bump
+`updated_at`, which would otherwise reorder the list every time you ticked one.
 Folders with no database row have nowhere to keep it and show a dash instead.
+
+**It has three states, because watching has three.** A checkbox already has a
+third look and this is what it is for: an empty box is a lecture you have not
+opened, a tick is one you are done with, and the indeterminate dash is one you
+are part-way through — where an empty box would claim you had never started it
+and a tick would be a lie. The tooltip carries the numbers the dash can't:
+`43% watched — picks up at 12:34`.
+
+The dash is not set by hand. The player writes `resume_at` every few seconds and
+whenever it stops, and `video_seconds` beside it — the length is stored because
+"43%" has to be answerable from the Library, where no video is open to measure.
+Passing `player.watchedAt` (90% by default) ticks the box for you: a lecture is
+over before the video is, the last minutes being questions and packing up, so
+waiting for the final second means the box never ticks itself and the column
+goes back to being maintained by hand. **The threshold is applied on the server**,
+in `setProgress`, so the rule holds wherever progress arrives from and a browser
+closed at 89% can't leave a lecture stuck one percent short forever.
+
+Unticking by hand also forgets the position. Without that, clearing a lecture you
+had watched to the end would put a "97% watched" dash straight back into the box
+you just cleared, and reopening it would resume ninety seconds from the end — the
+untick would look like it had failed and then behave as though it had.
 
 **Wk** is derived, never stored. A week is a view of a date through a term whose
 start date you can edit; storing it would mean correcting a term silently left
@@ -453,6 +475,23 @@ frame so dragging the divider or going full screen rescales it. The one thing
 this loses is the video element's *own* fullscreen button, where the page's
 overlay is behind the picture — so entering that hands the cues back to the
 browser and leaving takes them again.
+
+**A lecture opens where you left it.** The position is applied from a single
+permanent `loadedmetadata` handler holding a pending value, not a one-shot
+listener per lecture: a lecture closed before its metadata arrived would leave
+its handler attached, and the next lecture would then be seeked to the previous
+one's position. Two positions are ignored — the first fifteen seconds, which is
+a lecture you opened rather than one you got into, and anything within ten
+seconds of the end, where what you want is the beginning again. It says so in a
+line of toast, because a video that silently starts in the middle reads as a
+bug.
+
+Writes are throttled to one every five seconds while playing and forced on
+pause, on end and on teardown — teardown being what records the lecture you are
+leaving when you open the next one, since `setupPlayer` tears the old one down
+first. Closing the browser outright reaches none of those, so `pagehide` posts
+the last position with `fetch(..., { keepalive: true })`; `sendBeacon` can't be
+used, as it cannot set the `X-UniNotes` header every mutation requires.
 
 **← and → skip, from anywhere in the player.** The keys are bound to the
 document rather than to the video, because the video only has focus if you

@@ -31,6 +31,10 @@ export interface LectureRow {
   recorded_at: string | null;
   /** A date corrected by hand; outranks every other source. */
   date_override: string | null;
+  /** Seconds into the recording you got to, or null if you never opened it. */
+  resume_at: number | null;
+  /** The recording's length, so the Library can show a fraction. */
+  video_seconds: number | null;
   created_at: string;
   updated_at: string;
 }

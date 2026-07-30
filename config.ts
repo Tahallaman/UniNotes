@@ -193,6 +193,18 @@ export const DEFAULTS = {
      * the lecturer talks — 10 for a dense one, 30 for a slow one.
      */
     skipSeconds: 15,
+    /**
+     * How far through a recording counts as having watched it, as a percentage.
+     *
+     * A lecture is over before the video is: the last minutes are questions, a
+     * reminder about the assignment, and the lecturer packing up. Waiting for
+     * the final second before the box ticks itself means it never ticks, so the
+     * Library ends up maintained by hand — which is the thing this is for.
+     *
+     * 100 effectively turns the automatic tick off: only playing to the very end
+     * counts, and the "in progress" dash carries the information instead.
+     */
+    watchedAt: 90,
   },
 
   /**

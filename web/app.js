@@ -731,20 +731,63 @@ function watchedControl(entry) {
   const box = el("input");
   box.type = "checkbox";
   box.className = "watched-box";
-  box.checked = entry.watched;
-  box.title = "Mark as watched";
+  showWatched(box, entry);
   box.addEventListener("change", async () => {
     const wanted = box.checked;
+    const wasAt = entry.resumeAt;
     entry.watched = wanted;
+    // Unticking is "start again", and the server clears the position to match —
+    // see setWatched. Mirrored here so the box doesn't sit showing a dash for the
+    // few hundred milliseconds before the answer comes back.
+    if (!wanted) entry.resumeAt = null;
+    showWatched(box, entry);
     try {
       await post("/api/lectures/watched", { ids: [entry.id], watched: wanted });
     } catch (err) {
       entry.watched = !wanted;
-      box.checked = !wanted;
+      entry.resumeAt = wasAt;
+      showWatched(box, entry);
       toast(err.message, "bad");
     }
   });
   return box;
+}
+
+/** Below this, a position is a lecture you opened, not one you got into. */
+const RESUME_MIN = 15;
+
+/** How far through, 0–1, or null when there's nothing recorded to divide. */
+function watchFraction(entry) {
+  const at = Number(entry.resumeAt);
+  const length = Number(entry.videoSeconds);
+  if (!(at > 0) || !(length > 0)) return null;
+  return Math.min(1, at / length);
+}
+
+/** Started and not finished — the state the box has no tick for. */
+function partWatched(entry) {
+  return !entry.watched && Number(entry.resumeAt) >= RESUME_MIN;
+}
+
+/**
+ * Put a lecture's watched state on its box, in all three of them.
+ *
+ * A checkbox has a third look and this is exactly what it is for: a dash says
+ * "some of it", where an empty box would claim you had never opened the thing.
+ * The tooltip carries the numbers, since a dash on its own says how much only
+ * in the sense that it says "not all".
+ */
+function showWatched(box, entry) {
+  box.checked = entry.watched;
+  box.indeterminate = partWatched(entry);
+  const fraction = watchFraction(entry);
+  box.title = entry.watched
+    ? "Watched — click to clear"
+    : !box.indeterminate
+      ? "Mark as watched"
+      : fraction === null
+        ? `In progress — picks up at ${clockText(entry.resumeAt)}`
+        : `${Math.round(fraction * 100)}% watched — picks up at ${clockText(entry.resumeAt)}`;
 }
 
 document.getElementById("lib-search").addEventListener("input", (e) => {
@@ -1217,6 +1260,12 @@ const player = {
    */
   pinFrom: 0,
   pinUntil: 0,
+  /** The lecture whose position is being recorded, or null for one with no row. */
+  lectureId: null,
+  /** Where to pick up once the file reports its length. 0 means from the top. */
+  resumeTo: 0,
+  /** When the position was last written, so playing doesn't write every frame. */
+  savedAt: 0,
 };
 
 const videoEl = document.getElementById("player-video");
@@ -1475,6 +1524,12 @@ function setupPlayer(entry, play) {
   setFollow(true);
   setSync(state.settings.values["player.sync"] !== false);
   document.getElementById("player-clock").textContent = "00:00";
+  // Set before the file loads, and applied by the loadedmetadata handler — the
+  // length is what says whether this position is "part-way" or "the end", and
+  // that isn't known until the browser has read the file.
+  player.lectureId = entry.id;
+  player.resumeTo = Number(entry.resumeAt) || 0;
+  player.savedAt = 0;
   videoEl.src = `/api/video?key=${encodeURIComponent(entry.key)}`;
   applySubtitles(entry);
 
@@ -1636,6 +1691,12 @@ new ResizeObserver(() => {
 }).observe(document.querySelector(".player-frame"));
 
 function teardownPlayer() {
+  // First, while there is still a lecture id and a video to read a position off.
+  // Called from setupPlayer too, so this is also what records where you got to
+  // in the lecture you are leaving when you open the next one.
+  saveProgress(true);
+  player.lectureId = null;
+  player.resumeTo = 0;
   player.active = false;
   player.groups = [];
   player.current = -1;
@@ -1677,6 +1738,100 @@ function teardownPlayer() {
 videoEl.addEventListener("timeupdate", () => {
   document.getElementById("player-clock").textContent = clockText(videoEl.currentTime);
   highlightAt(videoEl.currentTime);
+  saveProgress();
+});
+
+// ── Where you got to ─────────────────────────────────────────────────────────
+
+/** How often a position is written down while a video plays, in ms. */
+const PROGRESS_EVERY = 5000;
+
+/**
+ * Pick up where you left off.
+ *
+ * A permanent listener holding a pending position, rather than a one-shot
+ * listener per lecture: a lecture closed before its metadata arrived would leave
+ * its handler attached, and the next lecture would then be seeked to the
+ * previous one's position.
+ *
+ * Two positions are deliberately ignored. The first few seconds are a lecture
+ * you opened and closed, not one you got into; and a position at the end is a
+ * lecture you finished, where what you want is the beginning again.
+ */
+videoEl.addEventListener("loadedmetadata", () => {
+  const at = player.resumeTo;
+  player.resumeTo = 0;
+  if (!player.active || at < RESUME_MIN) return;
+  const length = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
+  if (length > 0 && at > length - 10) return;
+
+  videoEl.currentTime = at;
+  highlightAt(at);
+  toast(`Picking up where you left off — ${clockText(at)}.`);
+});
+
+/**
+ * Write down where you are.
+ *
+ * Throttled hard while playing, because timeupdate fires four times a second
+ * and this is a disk write; forced whenever the video stops, which is where the
+ * position that matters usually comes from. Failures are swallowed: losing five
+ * seconds of a resume point is not worth interrupting a lecture over.
+ *
+ * The reply is the server's word on whether that crossed player.watchedAt, so
+ * the rule lives in one place and the Library learns the answer rather than
+ * working it out a second time.
+ */
+function saveProgress(force = false) {
+  const id = player.lectureId;
+  const at = videoEl.currentTime;
+  const length = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
+  if (!id || !(at > 0) || length <= 0) return;
+  if (!force && performance.now() - player.savedAt < PROGRESS_EVERY) return;
+  player.savedAt = performance.now();
+
+  post("/api/lectures/progress", { id, seconds: at, duration: length })
+    .then((result) => {
+      const entry = state.entries.find((e) => e.id === id);
+      if (!entry) return;
+      const was = `${entry.watched}/${partWatched(entry)}`;
+      entry.resumeAt = at;
+      entry.videoSeconds = length;
+      const ticked = result.watched && !entry.watched;
+      entry.watched = result.watched;
+
+      // Said out loud, because a box that ticks itself while you are watching is
+      // otherwise something you discover later and wonder about.
+      if (ticked) toast(`That's ${Math.round(watchFraction(entry) * 100)}% — marked as watched.`);
+      // Redrawn only when the box would actually look different. This runs every
+      // few seconds while a video plays, and rebuilding the table for a number
+      // nobody is looking at is work for nothing.
+      if (`${entry.watched}/${partWatched(entry)}` !== was && activeTab() === "panel-library") {
+        renderLibrary();
+      }
+    })
+    .catch(() => {});
+}
+
+// Pausing is the strongest signal there is that this is the position worth
+// keeping — you stopped here. Ending is the other one, and it is what ticks the
+// box for a lecture watched to the last second.
+videoEl.addEventListener("pause", () => saveProgress(true));
+videoEl.addEventListener("ended", () => saveProgress(true));
+
+// Closing the tab or the browser never reaches teardown. keepalive is what lets
+// the request outlive the page; sendBeacon can't be used because it cannot set
+// the X-UniNotes header the server requires of every mutation.
+window.addEventListener("pagehide", () => {
+  const id = player.lectureId;
+  const length = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
+  if (!id || !(videoEl.currentTime > 0) || length <= 0) return;
+  fetch("/api/lectures/progress", {
+    method: "POST",
+    keepalive: true,
+    headers: { "content-type": "application/json", "x-uninotes": "1" },
+    body: JSON.stringify({ id, seconds: videoEl.currentTime, duration: length }),
+  }).catch(() => {});
 });
 // Fires while the scrubber is being dragged, which is what makes the notes move
 // as you scrub rather than only once you let go.

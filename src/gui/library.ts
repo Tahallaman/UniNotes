@@ -40,8 +40,12 @@ export interface LibraryEntry {
   errorMessage: string | null;
   createdAt: string | null;
   updatedAt: string | null;
-  /** Ticked by hand. Always false for a folder with no row to record it in. */
+  /** Ticked by hand, or by the player passing player.watchedAt. */
   watched: boolean;
+  /** Seconds into the recording you got to, or null if you never opened it. */
+  resumeAt: number | null;
+  /** The recording's length, so a fraction can be shown without opening it. */
+  videoSeconds: number | null;
   /** Best known recording date, YYYY-MM-DD, or null if nothing yielded one. */
   lectureDate: string | null;
   /** Which source that date came from — shown so a wrong week is traceable. */
@@ -316,6 +320,8 @@ export function listLectures(): LibraryEntry[] {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       watched: row.watched === 1,
+      resumeAt: row.resume_at,
+      videoSeconds: row.video_seconds,
       lectureDate: placement.date,
       dateSource: placement.dateSource,
       dateOverride: row.date_override,
@@ -357,6 +363,9 @@ export function listLectures(): LibraryEntry[] {
       createdAt: d.mtime || null,
       updatedAt: d.mtime || null,
       watched: false,
+      // Nowhere to record either — same reason as watched.
+      resumeAt: null,
+      videoSeconds: null,
       lectureDate: placement.date,
       dateSource: placement.dateSource,
       dateOverride: null,

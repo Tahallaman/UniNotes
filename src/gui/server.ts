@@ -35,6 +35,7 @@ import {
   resetForRetry,
   forgetLectures,
   setWatched,
+  setProgress,
   setLectureDate,
   assertInsideLectures,
 } from "./mutations.js";
@@ -567,6 +568,18 @@ async function handleApi(
         changed,
         message: `Marked ${changed} lecture${changed === 1 ? "" : "s"} as ${watched ? "watched" : "not watched"}.`,
       });
+      return;
+    }
+
+    // Silent by design: this arrives every few seconds while a video plays, and
+    // a message per save would fill the toast queue with where you are.
+    case "POST /api/lectures/progress": {
+      const result = setProgress(
+        String(body.id ?? ""),
+        Number(body.seconds),
+        Number(body.duration),
+      );
+      sendJson(res, 200, result);
       return;
     }
 

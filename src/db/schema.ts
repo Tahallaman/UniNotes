@@ -52,8 +52,27 @@ function migrate(db: Database.Database): void {
 
   // After the rebuild above, not before: it recreates the table from a fixed
   // column list that predates these, so a column added first would be dropped.
-  const afterRebuild = db.pragma("table_info(lectures)") as Array<{ name: string }>;
-  const has = (name: string) => afterRebuild.some((c) => c.name === name);
+  addLateColumns(db);
+
+  log.info("Database initialized");
+}
+
+/**
+ * Columns added after the table's original shape was set.
+ *
+ * Exported because the pipeline is not the only writer. The control panel writes
+ * through short-lived connections of its own — deliberately, so it never holds
+ * the write lock against a run — and those never pass through getDb(). Without
+ * this, ticking Watched or recording where you got to in a video would fail
+ * against a database that had not happened to run the pipeline since the column
+ * was invented.
+ *
+ * Every branch is a no-op once applied, so calling it per connection costs one
+ * pragma.
+ */
+export function addLateColumns(db: Database.Database): void {
+  const cols = db.pragma("table_info(lectures)") as Array<{ name: string }>;
+  const has = (name: string) => cols.some((c) => c.name === name);
 
   if (!has("watched")) {
     db.exec(`ALTER TABLE lectures ADD COLUMN watched INTEGER NOT NULL DEFAULT 0`);
@@ -67,8 +86,15 @@ function migrate(db: Database.Database): void {
   if (!has("date_override")) {
     db.exec(`ALTER TABLE lectures ADD COLUMN date_override TEXT`);
   }
-
-  log.info("Database initialized");
+  // How far into the recording you got, in seconds, and how long the recording
+  // is. The length is stored alongside because "43% through" has to be
+  // answerable from the Library, where no video is open to measure.
+  if (!has("resume_at")) {
+    db.exec(`ALTER TABLE lectures ADD COLUMN resume_at REAL`);
+  }
+  if (!has("video_seconds")) {
+    db.exec(`ALTER TABLE lectures ADD COLUMN video_seconds REAL`);
+  }
 }
 
 /**
