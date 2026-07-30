@@ -45,6 +45,22 @@ const checks: Array<[string, boolean]> = [
   ["hour range shifted", out.includes("[1:30:00 - 1:30:30]")],
   ["markdown link untouched", out.includes("[a link](https://example.com/9:99)")],
 ];
+
+// The other direction, added for the caption offset: notes are written against
+// the downloaded file, and a recording Panopto trimmed at the front has a
+// transcript whose clock starts later. Taking the notes *down* into that clock
+// is what lets the two be read together — see buildHighlights.
+const back = shiftTimestamps(input, -120);
+checks.push(
+  ["a negative shift moves a heading back", back.includes("### [00:00]")],
+  ["and an inline marker with it", back.includes("[00:00]") && back.includes("[02:10]")],
+  ["an hour form comes back too", back.includes("[1:00:03]")],
+  ["ranges move at both ends", back.includes("[00:00 - 00:00]") || back.includes("[00:00 - 00:28]")],
+  // Anything that would land before the transcript starts clamps rather than
+  // going negative: that speech genuinely isn't in the transcript.
+  ["nothing goes negative", !/-\d?\d:\d\d/.test(back)],
+  ["a clock time is still not a timestamp", back.includes("9:00 AM")],
+);
 let bad = 0;
 for (const [n, ok] of checks) { if (!ok) bad++; console.log(`${ok ? "PASS" : "FAIL"}  ${n}`); }
 process.exit(bad === 0 ? 0 : 1);

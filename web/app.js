@@ -1278,7 +1278,7 @@ const player = {
   /** Where to pick up once the file reports its length. 0 means from the top. */
   resumeTo: 0,
   /**
-   * Seconds the file runs ahead of its transcript. See toVideo/toNotes.
+   * Seconds the file runs ahead of its transcript. See toVideo/toTranscript.
    *
    * Held here rather than read from the entry each time because it is consulted
    * on every timeupdate, and because it changes under you while you nudge it.
@@ -1307,29 +1307,39 @@ function parseClock(text) {
 }
 
 /**
- * The two clocks a lecture has, and the one place they are reconciled.
+ * The two clocks a lecture has, and the very short list of things that cross.
  *
  * Panopto can trim the front of a recording for playback and cut its transcript
- * to the trimmed version, then hand you the *untrimmed* file to download. When
- * that happens every transcript time is early by however much was cut — a few
- * seconds usually, four minutes on a bad one. And it isn't only the subtitles:
- * the timestamps in the notes and the spans in a highlights reel are transcript
- * times too, so a click that should land on a definition lands somewhere before
- * it, and the reel plays the wrong minutes entirely.
+ * to the trimmed version, then hand you the *untrimmed* file to download. Those
+ * two then disagree by however much was cut — seconds usually, four minutes on a
+ * bad one.
  *
- * So the player keeps two frames and never mixes them. Notes time is what the
- * transcript, the notes and the reel are written in; video time is where the
- * file's playhead actually is. Everything that crosses between them goes through
- * these two functions, and the offset is zero for almost every lecture — the
- * point of naming them is that the conversion is visible at each crossing rather
- * than assumed.
+ * Which side of that anything sits on is decided by what it was made from, and
+ * almost everything was made from the file:
+ *
+ *   FILE time — the video, and the notes, whose timestamps come from the model
+ *     reading this same recording. Measured on the lecture that prompted all
+ *     this: the notes put a quotation at 10:59 and the transcript has it at
+ *     07:01, and it is the notes that agree with the picture. The Transcript tab
+ *     and the subtitles are file time too, because `serveCaptions` shifts the
+ *     WebVTT before either sees it.
+ *
+ *   TRANSCRIPT time — the saved reel, whose spans are cut server-side from the
+ *     unshifted cues, and the position Explain sends, which the server looks up
+ *     in those same cues.
+ *
+ * So everything on screen shares one clock and needs no conversion at all; the
+ * crossings are the reel and Explain, and nothing else. This started out
+ * converting the notes as well, on the assumption that a timestamp is a
+ * timestamp — which put every click four minutes late on exactly the lectures
+ * the offset was added for.
  */
-function toVideo(noteSeconds) {
-  return Math.max(0, noteSeconds + player.offset);
+function toVideo(transcriptSeconds) {
+  return Math.max(0, transcriptSeconds + player.offset);
 }
 
-function toNotes(videoSeconds) {
-  return videoSeconds - player.offset;
+function toTranscript(videoSeconds) {
+  return Math.max(0, videoSeconds - player.offset);
 }
 
 function clockText(seconds) {
@@ -1404,7 +1414,7 @@ function syncNotes() {
   // Only now does anything become clickable, so notes with no timestamps in them
   // never grow a pointer cursor over text that would do nothing.
   notesEl.dataset.synced = "";
-  highlightAt(toNotes(videoEl.currentTime));
+  highlightAt(videoEl.currentTime);
 }
 
 /**
@@ -1479,7 +1489,7 @@ function setSync(on) {
 
   if (on) {
     if (player.groups.length > 0) notesEl.dataset.synced = "";
-    highlightAt(toNotes(videoEl.currentTime));
+    highlightAt(videoEl.currentTime);
     return;
   }
 
@@ -1517,12 +1527,13 @@ function seekTo(seconds, groupIndex) {
   // there's nothing to hear: the frame is the whole answer, and starting two
   // seconds early shows the slide before the one you pointed at.
   const lead = playing ? Number(state.settings.values["player.seekLeadIn"] ?? 2) : 0;
-  videoEl.currentTime = Math.max(0, toVideo(seconds) - lead);
+  // No conversion. Whatever is in the notes pane — the notes, or the Transcript
+  // tab, which is served already shifted — carries the video's own clock.
+  videoEl.currentTime = Math.max(0, seconds - lead);
   setFollow(true);
 
   if (groupIndex >= 0) {
-    // Both ends in notes time, because that is the frame highlightAt works in.
-    player.pinFrom = toNotes(videoEl.currentTime);
+    player.pinFrom = videoEl.currentTime;
     player.pinUntil = seconds;
     // No scroll: you clicked it, so it is already under your eye. Recentring
     // the page on the thing you just pointed at only moves it away from you.
@@ -1783,9 +1794,12 @@ function setOffset(seconds, { save = true } = {}) {
 
   if (was !== at) {
     // The cues carry times, and a TextTrack the browser has already parsed can't
-    // be shifted — so the corrected file has to be fetched again.
+    // be shifted — so the corrected file has to be fetched again. The Transcript
+    // tab is that same file, so it is re-read too when it is the one showing;
+    // the notes are unaffected, being in the video's own clock already.
     reloadCaptions();
-    highlightAt(toNotes(videoEl.currentTime));
+    if (state.noteTab === "transcript") loadNotes();
+    renderReel();
   }
 
   const id = player.lectureId;
@@ -1910,7 +1924,7 @@ function teardownPlayer() {
 
 videoEl.addEventListener("timeupdate", () => {
   showClock();
-  highlightAt(toNotes(videoEl.currentTime));
+  highlightAt(videoEl.currentTime);
   saveProgress();
   followReel();
 });
@@ -1918,23 +1932,23 @@ videoEl.addEventListener("timeupdate", () => {
 /**
  * The clock under the video: where you are, and how much there is.
  *
- * In notes time, because every other time on the screen is — the timestamps in
- * the notes, the spans in the reel, the subtitles. On a lecture whose file has
- * an untrimmed front, the file's own clock is the odd one out, and it is already
- * shown by the browser's controls a few pixels below.
+ * The file's own clock, which is also the notes' — so a time here can be matched
+ * against a timestamp in the notes beside it without arithmetic. When an offset
+ * is set, the title gives the transcript's number too, for anyone cross-checking
+ * against Panopto's own player.
  *
  * The total is what makes an offset findable in the first place: a recording
  * whose transcript stops four minutes before the picture does is exactly the
  * case this exists for, and you cannot see that from a clock that only counts up.
  */
 function showClock() {
-  const total = Number.isFinite(videoEl.duration) ? toNotes(videoEl.duration) : 0;
-  const at = toNotes(videoEl.currentTime);
+  const total = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
+  const at = videoEl.currentTime;
   const clock = document.getElementById("player-clock");
   clock.textContent = total > 0 ? `${clockText(at)} / ${clockText(total)}` : clockText(at);
   clock.title = player.offset
-    ? `The transcript's clock. The file is ${clockText(Math.abs(player.offset))} `
-      + `${player.offset > 0 ? "ahead" : "behind"} — it reads ${clockText(videoEl.currentTime)} here.`
+    ? `Where the recording is. Its transcript calls this ${clockText(toTranscript(at))}, `
+      + `being ${clockText(Math.abs(player.offset))} ${player.offset > 0 ? "shorter at the front" : "longer"}.`
     : "Position in the lecture";
 }
 
@@ -1965,8 +1979,8 @@ videoEl.addEventListener("loadedmetadata", () => {
   // Stored and restored in video time: it is a position in the file, and the
   // file is the thing that hasn't changed if the transcript is refetched.
   videoEl.currentTime = at;
-  highlightAt(toNotes(at));
-  toast(`Picking up where you left off — ${clockText(toNotes(at))}.`);
+  highlightAt(at);
+  toast(`Picking up where you left off — ${clockText(at)}.`);
 });
 
 /**
@@ -2034,7 +2048,7 @@ window.addEventListener("pagehide", () => {
 });
 // Fires while the scrubber is being dragged, which is what makes the notes move
 // as you scrub rather than only once you let go.
-videoEl.addEventListener("seeking", () => highlightAt(toNotes(videoEl.currentTime)));
+videoEl.addEventListener("seeking", () => highlightAt(videoEl.currentTime));
 videoEl.addEventListener("error", () => {
   if (player.active) toast("That video file couldn't be played. Chrome only handles MP4, WebM and MOV.", "bad");
 });
@@ -2442,9 +2456,10 @@ async function askExplain({ question = "", selection = "", at = null } = {}) {
       whole,
       key: state.drawerKey,
       // The passage's own place in the lecture when there is one, the video's
-      // otherwise. See notesSelection(). Notes time either way — the far end
-      // looks this up in the transcript, which is the frame the notes are in.
-      atSeconds: Math.floor(at ?? toNotes(videoEl.currentTime ?? 0)),
+      // otherwise. See notesSelection(). The file's clock, like everything else
+      // on screen — the server holds this lecture's offset and converts for the
+      // one thing that needs it, which is the transcript window.
+      atSeconds: Math.floor(at ?? videoEl.currentTime ?? 0),
       question,
       selection,
       // Everything up to but not including the turn just pushed — the server
@@ -2772,11 +2787,14 @@ function renderReel() {
     const item = el("button", { class: "reel-item", type: "button" });
     if (segment.start === playingAt) item.classList.add("on");
     item.append(
-      el("span", { class: "ts", text: clockText(segment.start) }),
+      // Shown in the video's clock, not the transcript's, so a span's time reads
+      // the same as the timestamps in the notes beside it and as the clock under
+      // the picture. Only the stored number is transcript time.
+      el("span", { class: "ts", text: clockText(toVideo(segment.start)) }),
       el("span", { class: "reel-text", text: segment.why }),
       el("span", { class: "reel-weight", text: `${Math.round(segment.end - segment.start)}s` }),
     );
-    item.title = `${clockText(segment.start)}–${clockText(segment.end)} · scored ${segment.weight}/5`;
+    item.title = `${clockText(toVideo(segment.start))}–${clockText(toVideo(segment.end))} · scored ${segment.weight}/5`;
     item.addEventListener("click", () => playSegment(segment));
     return item;
   });
@@ -2864,7 +2882,7 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
   // Already steering and nowhere particular to go: leave it where it is.
   if (was && at < 0) return;
 
-  const t = toNotes(videoEl.currentTime);
+  const t = toTranscript(videoEl.currentTime);
   const inside = segments.findIndex((s) => t >= s.start && t < s.end);
   const next = segments.findIndex((s) => s.start > t);
   const index = at >= 0 ? at : inside >= 0 ? inside : next >= 0 ? next : 0;
@@ -2887,7 +2905,7 @@ function followReel() {
   const segments = reelSegments();
   const current = segments[reel.index];
   if (!current) return;
-  if (toNotes(videoEl.currentTime) < current.end) return;
+  if (toTranscript(videoEl.currentTime) < current.end) return;
 
   if (reel.index + 1 >= segments.length) {
     // The end of the reel is the end of watching, not a jump back to the top.
@@ -2911,7 +2929,7 @@ function followReel() {
  */
 videoEl.addEventListener("seeking", () => {
   if (!reel.on) return;
-  const t = toNotes(videoEl.currentTime);
+  const t = toTranscript(videoEl.currentTime);
   if (Math.abs(t - reel.seekTo) < 0.75) return;
   reel.seekTo = -1;
 
@@ -3023,7 +3041,7 @@ document.getElementById("reel-presets").addEventListener("click", (event) => {
   reel.preset = preset;
   // Re-landed rather than left where it was: this is a different set of spans,
   // and the index is a position in *this* list.
-  const t = toNotes(videoEl.currentTime);
+  const t = toTranscript(videoEl.currentTime);
   const segments = reelSegments();
   const inside = segments.findIndex((s) => t >= s.start && t < s.end);
   reel.index = reel.on ? (inside >= 0 ? inside : Math.max(0, segments.findIndex((s) => s.start > t))) : -1;

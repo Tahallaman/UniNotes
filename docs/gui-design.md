@@ -503,16 +503,28 @@ timestamp in the notes and every span in a highlights reel is a transcript time,
 so on those lectures a click that should land on a definition lands before it and
 a reel plays the wrong minutes throughout.
 
-So the player keeps **two clocks and never mixes them** — notes time, which the
-transcript, the notes and the reel are all written in, and video time, where the
-playhead actually is — and every crossing goes through `toVideo`/`toNotes`. The
-offset is zero for almost every lecture; the point of naming the conversion is
-that it is visible at each crossing rather than assumed. Two consumers are
-exceptions in opposite directions. A `<track>` cannot be told its cues are early,
-so `serveCaptions` shifts the WebVTT on the way out and the browser's timing
-needs no correcting. And where you got to is stored in *video* time, because it
-is a position in a file — the one thing that doesn't move when a transcript is
-refetched.
+**Which clock a thing is in is decided by what it was made from**, and that is
+worth stating precisely, because guessing it wrong is how this was first built.
+The notes are written by a model reading *the downloaded video*, so their
+timestamps are in the file's clock — measured on the lecture that prompted all
+this, the notes put a quotation at 10:59 that the transcript has at 07:01, and it
+is the notes that agree with the picture. The Transcript tab and the subtitles
+are in the file's clock too, because `serveCaptions` shifts the WebVTT before
+either of them sees it. So everything on screen shares one clock and needs no
+conversion at all.
+
+Two things are in the transcript's clock, and only two: **the saved reel**, whose
+spans are cut server-side from the unshifted cues, and **the position Explain
+sends**, which the server looks up in those same cues. Those are the crossings,
+and they go through `toVideo`/`toTranscript`. Where you got to is stored in the
+file's clock, being a position in a file — the one thing that doesn't move when a
+transcript is refetched.
+
+The first version of this converted the notes as well, on the assumption that a
+timestamp is a timestamp. It made every click land four minutes late on exactly
+the lectures the offset had been added for, and a screenshot of it went past
+unnoticed: the video was on the closing slide while the notes highlighted a
+section from four minutes earlier.
 
 The correction is stored per lecture, in `caption_offset`, because it is a
 property of how that one recording was cut. It is applied on the way out rather

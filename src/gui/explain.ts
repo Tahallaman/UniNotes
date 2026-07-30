@@ -438,7 +438,14 @@ export function buildContext(key: string, atSeconds: number, wholeDocument = fal
       // No transcript cached. Nothing to add, and nothing to report — the answer
       // is still perfectly good from the notes alone.
     }
-    const window = vtt ? transcriptWindow(vtt, atSeconds, cfg.subtitleLines) : "";
+    // The one place in here that isn't in the video's clock. `atSeconds` and the
+    // notes above are both file times; the cached transcript is Panopto's own,
+    // which on a recording trimmed at the front starts later than the file does.
+    // Ask it for the wrong minute and the model is handed notes about one thing
+    // and speech about another — see the player's caption offset.
+    const window = vtt
+      ? transcriptWindow(vtt, atSeconds - (entry.captionOffset ?? 0), cfg.subtitleLines)
+      : "";
     if (window) {
       body += section("What the lecturer was actually saying, leading up to this moment", window);
       used.subtitles = true;

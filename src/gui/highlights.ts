@@ -58,6 +58,7 @@ import { captionsPath, parseVtt } from "../panopto/captions.js";
 import { listLectures, readNotes } from "./library.js";
 import { readOverview } from "./explain.js";
 import { effectiveConfig } from "./effective.js";
+import { shiftTimestamps } from "../utils/timestamps.js";
 import { log } from "../utils/logger.js";
 
 /** One span of lecture worth watching. */
@@ -700,7 +701,22 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // structure but thinned timestamps; the transcript carries every word and
   // exact times but no judgement. Reading the notes first is what lets the model
   // find the meat in them and then pin it to a real time below.
-  if (notes) body += section("The notes for this lecture", stripFrontmatter(notes.content));
+  //
+  // Rebased into the transcript's clock on the way in, which matters precisely
+  // because the two are asked to work together. The notes were written by a model
+  // watching the downloaded file; the transcript is Panopto's, cut to a recording
+  // trimmed at the front. On the lecture this was measured against they disagree
+  // by 3:57 — the notes put a quotation at 10:59 that the transcript has at
+  // 07:01. Sent unaligned, the instruction "find where the notes say this
+  // happened" points four minutes from where it happened, and a time taken from
+  // the notes still snaps to a real cue, so the mistake would come back looking
+  // perfectly valid. Zero for almost every lecture, and then this does nothing.
+  if (notes) {
+    body += section(
+      "The notes for this lecture",
+      shiftTimestamps(stripFrontmatter(notes.content), -(entry.captionOffset ?? 0)),
+    );
+  }
   body += section(
     "The transcript. Every start and end you give must be a time that appears here",
     blocks(cues, cfg.blockSeconds),

@@ -66,10 +66,15 @@ export function formatTimestamp(totalSeconds: number): string {
  * Runs even at offset 0 (part 1, or an unsplit lecture) so formatting is
  * normalised consistently across the whole document rather than leaving part 1
  * with whatever padding the model happened to emit.
+ *
+ * Negative is allowed, and is the other direction the same problem comes from:
+ * rebasing a part *up* into the whole recording is what this was written for,
+ * and taking notes written against the file *down* into a transcript's own clock
+ * is what a Panopto recording trimmed at the front needs. Anything that lands
+ * before zero clamps there, which is the honest answer — that speech isn't in
+ * the transcript at all.
  */
 export function shiftTimestamps(markdown: string, offsetSeconds: number): string {
-  if (offsetSeconds < 0) return markdown;
-
   // Ranges first: BRACKETED would otherwise consume neither end, and running it
   // first would leave the range's second timestamp unshifted.
   let out = markdown.replace(
