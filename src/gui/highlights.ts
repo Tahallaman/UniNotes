@@ -712,10 +712,13 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // the notes still snaps to a real cue, so the mistake would come back looking
   // perfectly valid. Zero for almost every lecture, and then this does nothing.
   if (notes) {
-    body += section(
-      "The notes for this lecture",
-      shiftTimestamps(stripFrontmatter(notes.content), -(entry.captionOffset ?? 0)),
-    );
+    const text = stripFrontmatter(notes.content);
+    // Guarded rather than called with 0, because shiftTimestamps normalises
+    // padding as it goes and would rewrite the notes of every lecture that has
+    // no offset. Nothing was wrong with those, and a correction for a handful of
+    // trimmed recordings should be invisible to the rest.
+    const offset = entry.captionOffset ?? 0;
+    body += section("The notes for this lecture", offset ? shiftTimestamps(text, -offset) : text);
   }
   body += section(
     "The transcript. Every start and end you give must be a time that appears here",
