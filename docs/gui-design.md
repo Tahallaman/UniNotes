@@ -331,6 +331,14 @@ which by the plain rule would light up the previous group. So a click pins its
 own group for exactly that lead-in, bounded at both ends: scrubbing away during
 those seconds breaks the pin instead of freezing the highlight.
 
+**A click resumes playing only if it already was.** Clicking a note used to
+start the video unconditionally, on the reasoning that pointing at a line is
+asking to hear it. That is true while you're watching and wrong while you're
+reading: working down a paused lecture, clicking through the points and dragging
+the picture along with you, meant reaching for pause after every click. So the
+paused state is read before the seek — seeking is itself enough to change it —
+and only a video that was running is told to carry on.
+
 **The video is a local file, not Panopto.** Panopto's pages send
 `frame-ancestors 'self' https:`, so they will embed from an https origin but
 refuse a page served over `http://127.0.0.1`, and an embed would additionally

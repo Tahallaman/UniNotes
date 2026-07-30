@@ -1418,6 +1418,8 @@ function jumpToNow() {
 
 function seekTo(seconds, groupIndex) {
   const lead = Number(state.settings.values["player.seekLeadIn"] ?? 2);
+  // Read before the seek, because seeking is itself enough to change it.
+  const playing = !videoEl.paused;
   videoEl.currentTime = Math.max(0, seconds - lead);
   setFollow(true);
 
@@ -1429,9 +1431,14 @@ function seekTo(seconds, groupIndex) {
     setCurrentGroup(groupIndex, false);
   }
 
-  // Clicking a note is a request to hear it. Autoplay policy can still refuse,
-  // in which case the seek has happened and you press play yourself.
-  videoEl.play().catch(() => {});
+  // Only if it was already running. A click in the notes while the video is
+  // paused is reading, not watching — you're working through the points and
+  // moving the picture along with you, and having it start talking every time
+  // you click a line means reaching for pause as often as you click.
+  //
+  // Autoplay policy can still refuse, in which case the seek has happened and
+  // you press play yourself.
+  if (playing) videoEl.play().catch(() => {});
 }
 
 function setupPlayer(entry, play) {
