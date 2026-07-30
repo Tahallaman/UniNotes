@@ -744,8 +744,12 @@ revision is kept only if it has more cuts or fewer holes than what it replaced.
 Once, not until satisfied: each pass costs a call, and a model that ignores the
 note twice will not yield on the third.
 
-Measured on a 44-minute lecture, that pass took Skim from 16 cuts with five holes
-to 24 with none, and Deep from 31 to 49.
+Measured on a 44-minute policy lecture, that pass took Skim from 16 cuts with
+five holes to 24 with none, and Deep from 31 to 49. On a 78-minute technical
+lecture it gave 63 cuts over 29 minutes with exactly one stretch left out — seven
+minutes of "thank you, see you Friday" and questions about lab groups, which is
+the right thing to leave out and what the note tells it to do when the gap turns
+out to be admin.
 
 **Two failures found by running it, not by reading it.** The token budget covers
 *thinking* as well as output, and at level high the thinking alone ran to 31k of a
