@@ -1417,9 +1417,12 @@ function jumpToNow() {
 }
 
 function seekTo(seconds, groupIndex) {
-  const lead = Number(state.settings.values["player.seekLeadIn"] ?? 2);
   // Read before the seek, because seeking is itself enough to change it.
   const playing = !videoEl.paused;
+  // The lead-in buys you the run-up to a point you're about to *hear*. Paused,
+  // there's nothing to hear: the frame is the whole answer, and starting two
+  // seconds early shows the slide before the one you pointed at.
+  const lead = playing ? Number(state.settings.values["player.seekLeadIn"] ?? 2) : 0;
   videoEl.currentTime = Math.max(0, seconds - lead);
   setFollow(true);
 

@@ -339,6 +339,12 @@ the picture along with you, meant reaching for pause after every click. So the
 paused state is read before the seek — seeking is itself enough to change it —
 and only a video that was running is told to carry on.
 
+Paused also drops the lead-in. It buys the run-up to something you are about to
+*hear*; with nothing playing the frame is the whole answer, and landing two
+seconds early shows the slide before the one you pointed at. So a click while
+playing lands early and pins the highlight through the run-up, and a click while
+paused lands exactly on the timestamp.
+
 **The video is a local file, not Panopto.** Panopto's pages send
 `frame-ancestors 'self' https:`, so they will embed from an https origin but
 refuse a page served over `http://127.0.0.1`, and an embed would additionally
