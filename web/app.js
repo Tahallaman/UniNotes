@@ -2902,7 +2902,8 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
  */
 function followReel() {
   if (!reel.on) return;
-  const segments = reelSegments();
+  const saved = reelCurrent();
+  const segments = saved?.segments ?? [];
   const current = segments[reel.index];
   if (!current) return;
   if (toTranscript(videoEl.currentTime) < current.end) return;
@@ -2911,7 +2912,7 @@ function followReel() {
     // The end of the reel is the end of watching, not a jump back to the top.
     videoEl.pause();
     setReelOn(false, { silent: true });
-    toast(`That's the reel — ${clockText(reelPick().seconds)} of ${clockText(reel.payload.reel.lectureSeconds)}.`);
+    toast(`That's the reel — ${clockText(saved.seconds)} of ${clockText(saved.lectureSeconds)}.`);
     return;
   }
   setReelIndex(reel.index + 1);
