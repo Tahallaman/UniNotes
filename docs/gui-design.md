@@ -494,6 +494,47 @@ this loses is the video element's *own* fullscreen button, where the page's
 overlay is behind the picture — so entering that hands the cues back to the
 browser and leaving takes them again.
 
+**Offset, on the right of the player bar, is for a recording Panopto trimmed and
+a download it didn't.** A few recordings are cut at the front for playback, and
+the transcript is cut with them — but the file you can download is the untrimmed
+original, so the two clocks disagree by however much was removed: a few seconds
+usually, four minutes on a bad one. This is not a subtitle problem. Every
+timestamp in the notes and every span in a highlights reel is a transcript time,
+so on those lectures a click that should land on a definition lands before it and
+a reel plays the wrong minutes throughout.
+
+So the player keeps **two clocks and never mixes them** — notes time, which the
+transcript, the notes and the reel are all written in, and video time, where the
+playhead actually is — and every crossing goes through `toVideo`/`toNotes`. The
+offset is zero for almost every lecture; the point of naming the conversion is
+that it is visible at each crossing rather than assumed. Two consumers are
+exceptions in opposite directions. A `<track>` cannot be told its cues are early,
+so `serveCaptions` shifts the WebVTT on the way out and the browser's timing
+needs no correcting. And where you got to is stored in *video* time, because it
+is a position in a file — the one thing that doesn't move when a transcript is
+refetched.
+
+The correction is stored per lecture, in `caption_offset`, because it is a
+property of how that one recording was cut. It is applied on the way out rather
+than written into the cached transcript: that file is Panopto's copy and gets
+swept and refetched every session, so an edit in place would be lost by morning.
+
+The control is one number box, sitting clear of the two button groups. It could
+have been a stepper with nudge buttons and a "line up from here" — it was, for an
+hour — but that is a row of controls for something most lectures never need, and
+the bar had room for a box. It takes `90` or `1:30`, applies on change rather than
+per keystroke since each change refetches the transcript, and rejects junk by
+reverting to what it was: zero is a real setting here, so quietly adopting it
+would throw away a correction over a typo. Set, it lights up — an offset you typed
+and forgot is a lecture that seeks wrong all afternoon.
+
+**The clock beside it counts in notes time, and shows the total.** Every other
+time on screen is in that frame, and the file's own clock is already a few pixels
+below in the browser's controls. The total is what makes the fault findable in
+the first place: a recording whose transcript stops four minutes before the
+picture does is exactly the case this exists for, and you cannot see that from a
+clock that only counts up.
+
 **A lecture opens where you left it.** The position is applied from a single
 permanent `loadedmetadata` handler holding a pending value, not a one-shot
 listener per lecture: a lecture closed before its metadata arrived would leave

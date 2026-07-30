@@ -46,6 +46,11 @@ export interface LibraryEntry {
   resumeAt: number | null;
   /** The recording's length, so a fraction can be shown without opening it. */
   videoSeconds: number | null;
+  /**
+   * Seconds the downloaded file runs ahead of its transcript, corrected by hand
+   * in the player. 0 for the ordinary case where the two agree.
+   */
+  captionOffset: number;
   /** Best known recording date, YYYY-MM-DD, or null if nothing yielded one. */
   lectureDate: string | null;
   /** Which source that date came from — shown so a wrong week is traceable. */
@@ -322,6 +327,7 @@ export function listLectures(): LibraryEntry[] {
       watched: row.watched === 1,
       resumeAt: row.resume_at,
       videoSeconds: row.video_seconds,
+      captionOffset: row.caption_offset ?? 0,
       lectureDate: placement.date,
       dateSource: placement.dateSource,
       dateOverride: row.date_override,
@@ -366,6 +372,7 @@ export function listLectures(): LibraryEntry[] {
       // Nowhere to record either — same reason as watched.
       resumeAt: null,
       videoSeconds: null,
+      captionOffset: 0,
       lectureDate: placement.date,
       dateSource: placement.dateSource,
       dateOverride: null,

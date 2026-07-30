@@ -21,7 +21,7 @@ import http from "node:http";
 import { listLectures } from "./library.js";
 import { assertInsideLectures } from "./mutations.js";
 import { cachedVideoPath } from "../utils/videoCache.js";
-import { captionsPath } from "../panopto/captions.js";
+import { captionsPath, shiftVtt } from "../panopto/captions.js";
 
 /** Extensions checked for, in the order they're preferred. */
 const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mkv", ".mov", ".avi"];
@@ -81,6 +81,11 @@ export function videoPathFor(key: string): string | null {
  * Same origin as the page, which matters: a <track> from another origin needs
  * CORS headers Panopto doesn't send, and is the reason the file is fetched and
  * stored rather than linked.
+ *
+ * The lecture's caption offset is applied on the way out, so what a <track>
+ * receives is already in the file's own clock and the browser's cue timing needs
+ * no correcting. Everything else in the player converts between the two frames
+ * itself; this is the one consumer that can't.
  */
 export function serveCaptions(res: http.ServerResponse, key: string): void {
   const entry = listLectures().find((e) => e.key === key);
@@ -94,7 +99,8 @@ export function serveCaptions(res: http.ServerResponse, key: string): void {
 
   let body: Buffer;
   try {
-    body = fs.readFileSync(file);
+    const text = fs.readFileSync(file, "utf-8");
+    body = Buffer.from(shiftVtt(text, entry?.captionOffset ?? 0), "utf-8");
   } catch {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end("No transcript for that lecture.");

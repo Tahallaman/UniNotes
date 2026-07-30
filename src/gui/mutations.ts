@@ -169,6 +169,30 @@ export function setLectureDate(id: string, date: string | null): void {
 }
 
 /**
+ * Record how far a downloaded recording runs ahead of its transcript.
+ *
+ * Set from the player, where the mistake is visible and the correction can be
+ * heard immediately. Bounded at twenty minutes because the failure this fixes is
+ * a trimmed front — a number past that is a typo, and a typo here would put every
+ * timestamp in the lecture somewhere else.
+ *
+ * Like the other player writes, it leaves updated_at alone: aligning a
+ * transcript is not a change to the lecture, and the library is sorted by that
+ * column.
+ */
+export function setCaptionOffset(id: string, seconds: number): number {
+  if (!Number.isFinite(seconds)) throw new Error("An offset has to be a number of seconds.");
+  const at = Math.max(-1200, Math.min(1200, Math.round(seconds * 1000) / 1000));
+  withWriteDb((db) => {
+    const changed = db
+      .prepare(`UPDATE lectures SET caption_offset = ? WHERE id = ?`)
+      .run(at, id).changes;
+    if (changed === 0) throw new Error("That lecture isn't tracked in the database.");
+  });
+  return at;
+}
+
+/**
  * Forget a lecture entirely so it can be re-scraped and reprocessed from scratch.
  * Note files on disk are left alone — this removes the tracking row, not your notes.
  */

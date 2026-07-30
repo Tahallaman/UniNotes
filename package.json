@@ -47,9 +47,10 @@
     "test:export-names": "tsx scripts/test-export-names.ts",
     "test:ledger": "tsx scripts/test-export-ledger.ts",
     "test:highlights": "tsx scripts/test-highlights.ts",
+    "test:captions": "tsx scripts/test-captions.ts",
     "sync": "tsx scripts/sync-workspace.ts",
     "probe:panopto-view": "tsx scripts/probe-panopto-view.ts",
-    "test": "npm run typecheck && npm run test:attach && npm run test:timestamps && npm run test:blank && npm run test:weeks && npm run test:explain && npm run test:export-names && npm run test:ledger && npm run test:highlights"
+    "test": "npm run typecheck && npm run test:attach && npm run test:timestamps && npm run test:blank && npm run test:weeks && npm run test:explain && npm run test:export-names && npm run test:ledger && npm run test:highlights && npm run test:captions"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

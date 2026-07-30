@@ -37,6 +37,7 @@ import {
   setWatched,
   setProgress,
   setLectureDate,
+  setCaptionOffset,
   assertInsideLectures,
 } from "./mutations.js";
 import { destinationFor, lectureNumbersByCourse, validateTerms } from "../notes/organise.js";
@@ -581,6 +582,14 @@ async function handleApi(
         Number(body.duration),
       );
       sendJson(res, 200, result);
+      return;
+    }
+
+    // Also silent: the reply is the stored number, and the player says what it
+    // did in its own control rather than through a toast per nudge.
+    case "POST /api/lectures/offset": {
+      const seconds = setCaptionOffset(String(body.id ?? ""), Number(body.seconds));
+      sendJson(res, 200, { seconds });
       return;
     }
 

@@ -660,6 +660,26 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
    rather than sitting there as a control that would do nothing. */
 .chip-btn:disabled { opacity: .35; cursor: default; }
 .player-clock { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+/* ── Lining the transcript up with the picture ───────────────────────────── */
+
+/* Not in a segmented group: this is a number you type, not a button you press,
+   and the gap either side is what says so. */
+.player-offset {
+  display: inline-flex; align-items: center; gap: .35rem;
+  color: var(--muted); white-space: nowrap;
+}
+.player-offset[hidden] { display: none; }
+.align-value {
+  width: 3.4rem; padding: .3rem .35rem; text-align: right;
+  font-family: var(--mono); font-size: var(--s-1); font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line-firm); border-radius: 6px;
+  background: var(--raised); color: var(--ink);
+}
+.align-value:focus-visible { outline: 2px solid var(--ready); outline-offset: -2px; }
+/* Set, and so quietly moving every timestamp on the screen. An offset you typed
+   and forgot is a lecture that seeks wrong all afternoon, so a set one is lit. */
+.player-offset.set { color: var(--ready); }
+.player-offset.set .align-value { border-color: var(--ready); color: var(--ready); }
 
 /* ── Explain ─────────────────────────────────────────────────────────────── */
 

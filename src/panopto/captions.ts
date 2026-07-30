@@ -118,6 +118,47 @@ export function parseVtt(vtt: string): Cue[] {
   return cues;
 }
 
+/** Seconds → "HH:MM:SS.mmm", WebVTT's own shape. */
+function vttStamp(seconds: number): string {
+  const whole = Math.max(0, seconds);
+  const ms = Math.round((whole % 1) * 1000);
+  const total = Math.floor(whole);
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}.${pad(ms, 3)}`;
+}
+
+const STAMP = /\d{2}:\d{2}:\d{2}[.,]\d{1,3}/g;
+
+/**
+ * Move every cue in a transcript later by `seconds`.
+ *
+ * Panopto sometimes trims the front of a recording for playback and cuts the
+ * transcript to the trimmed version, while the file you can download is the
+ * untrimmed original. The two then disagree by however much was cut — a few
+ * seconds on most, minutes on some — and since every timestamp in the notes and
+ * every span in a highlights reel is a transcript time, that offset is wrong
+ * everywhere at once, not just in the subtitles.
+ *
+ * Applied here, on the way out, rather than to the cached file: the transcript
+ * is Panopto's copy and gets swept and refetched, so editing it in place would
+ * lose the correction on the next fetch. The stored number is the correction;
+ * this is the one place it is spent.
+ *
+ * Only timing lines are touched. A timestamp written out inside a cue's text —
+ * a lecturer reading one aloud — is text, not timing.
+ */
+export function shiftVtt(vtt: string, seconds: number): string {
+  if (!Number.isFinite(seconds) || Math.abs(seconds) < 0.001) return vtt;
+  return vtt
+    .split("\n")
+    .map((line) =>
+      line.includes("-->")
+        ? line.replace(STAMP, (stamp) => vttStamp(cueTime(stamp) + seconds))
+        : line,
+    )
+    .join("\n");
+}
+
 /**
  * Fetch one recording's captions through an already-authenticated context.
  *

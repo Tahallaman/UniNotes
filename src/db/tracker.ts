@@ -35,6 +35,8 @@ export interface LectureRow {
   resume_at: number | null;
   /** The recording's length, so the Library can show a fraction. */
   video_seconds: number | null;
+  /** Seconds the downloaded file runs ahead of the transcript. Usually 0. */
+  caption_offset: number | null;
   created_at: string;
   updated_at: string;
 }

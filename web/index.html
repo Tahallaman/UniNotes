@@ -332,8 +332,20 @@
               </svg>
             </button>
           </div>
+          <!-- Loose in the bar rather than inside a group: the groups are things
+               you press, and this is a number you type once for the rare
+               recording Panopto trimmed at the front. Sitting just clear of them
+               is what says it isn't one of them. -->
+          <label id="player-offset" class="player-offset" hidden
+                 title="Seconds the downloaded file runs ahead of its transcript. Set this when the subtitles and the timestamps land early — it corrects the notes, the subtitles and the highlights together.">
+            <span>Offset</span>
+            <input id="align-value" class="align-value" type="text" inputmode="decimal"
+                   autocomplete="off" spellcheck="false"
+                   aria-label="Seconds the file runs ahead of its transcript">
+            <span aria-hidden="true">s</span>
+          </label>
           </div>
-          <span id="player-clock" class="player-clock">00:00</span>
+          <span id="player-clock" class="player-clock" title="Position in the lecture">00:00</span>
         </div>
 
         <!-- Below the video rather than in the notes column: the notes are the

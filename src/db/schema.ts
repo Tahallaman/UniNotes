@@ -95,6 +95,15 @@ export function addLateColumns(db: Database.Database): void {
   if (!has("video_seconds")) {
     db.exec(`ALTER TABLE lectures ADD COLUMN video_seconds REAL`);
   }
+  // How far the downloaded file runs ahead of the transcript, in seconds.
+  // Panopto can trim the front of a recording for playback and cut the
+  // transcript to the trimmed version while still serving the original file, so
+  // every transcript time — subtitles, note timestamps, highlight spans — lands
+  // that much early. Per lecture, because it is a property of how that one
+  // recording was cut.
+  if (!has("caption_offset")) {
+    db.exec(`ALTER TABLE lectures ADD COLUMN caption_offset REAL NOT NULL DEFAULT 0`);
+  }
 }
 
 /**

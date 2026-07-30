@@ -1277,6 +1277,15 @@ const player = {
   lectureId: null,
   /** Where to pick up once the file reports its length. 0 means from the top. */
   resumeTo: 0,
+  /**
+   * Seconds the file runs ahead of its transcript. See toVideo/toNotes.
+   *
+   * Held here rather than read from the entry each time because it is consulted
+   * on every timeupdate, and because it changes under you while you nudge it.
+   */
+  offset: 0,
+  /** The lecture whose transcript is attached, so it can be re-fetched shifted. */
+  captionsKey: "",
   /** When the position was last written, so playing doesn't write every frame. */
   savedAt: 0,
 };
@@ -1295,6 +1304,32 @@ function parseClock(text) {
   if (bits.length === 2) return bits[0] * 60 + bits[1];
   if (bits.length === 3) return bits[0] * 3600 + bits[1] * 60 + bits[2];
   return null;
+}
+
+/**
+ * The two clocks a lecture has, and the one place they are reconciled.
+ *
+ * Panopto can trim the front of a recording for playback and cut its transcript
+ * to the trimmed version, then hand you the *untrimmed* file to download. When
+ * that happens every transcript time is early by however much was cut — a few
+ * seconds usually, four minutes on a bad one. And it isn't only the subtitles:
+ * the timestamps in the notes and the spans in a highlights reel are transcript
+ * times too, so a click that should land on a definition lands somewhere before
+ * it, and the reel plays the wrong minutes entirely.
+ *
+ * So the player keeps two frames and never mixes them. Notes time is what the
+ * transcript, the notes and the reel are written in; video time is where the
+ * file's playhead actually is. Everything that crosses between them goes through
+ * these two functions, and the offset is zero for almost every lecture — the
+ * point of naming them is that the conversion is visible at each crossing rather
+ * than assumed.
+ */
+function toVideo(noteSeconds) {
+  return Math.max(0, noteSeconds + player.offset);
+}
+
+function toNotes(videoSeconds) {
+  return videoSeconds - player.offset;
 }
 
 function clockText(seconds) {
@@ -1369,7 +1404,7 @@ function syncNotes() {
   // Only now does anything become clickable, so notes with no timestamps in them
   // never grow a pointer cursor over text that would do nothing.
   notesEl.dataset.synced = "";
-  highlightAt(videoEl.currentTime);
+  highlightAt(toNotes(videoEl.currentTime));
 }
 
 /**
@@ -1444,7 +1479,7 @@ function setSync(on) {
 
   if (on) {
     if (player.groups.length > 0) notesEl.dataset.synced = "";
-    highlightAt(videoEl.currentTime);
+    highlightAt(toNotes(videoEl.currentTime));
     return;
   }
 
@@ -1482,11 +1517,12 @@ function seekTo(seconds, groupIndex) {
   // there's nothing to hear: the frame is the whole answer, and starting two
   // seconds early shows the slide before the one you pointed at.
   const lead = playing ? Number(state.settings.values["player.seekLeadIn"] ?? 2) : 0;
-  videoEl.currentTime = Math.max(0, seconds - lead);
+  videoEl.currentTime = Math.max(0, toVideo(seconds) - lead);
   setFollow(true);
 
   if (groupIndex >= 0) {
-    player.pinFrom = videoEl.currentTime;
+    // Both ends in notes time, because that is the frame highlightAt works in.
+    player.pinFrom = toNotes(videoEl.currentTime);
     player.pinUntil = seconds;
     // No scroll: you clicked it, so it is already under your eye. Recentring
     // the page on the thing you just pointed at only moves it away from you.
@@ -1543,6 +1579,10 @@ function setupPlayer(entry, play) {
   player.lectureId = entry.id;
   player.resumeTo = Number(entry.resumeAt) || 0;
   player.savedAt = 0;
+  // Before the src and before the track: both the notes and the transcript are
+  // read through it, and a lecture that opens with the previous one's offset
+  // would put every timestamp in the wrong place until you touched something.
+  setOffset(Number(entry.captionOffset) || 0, { save: false });
   videoEl.src = `/api/video?key=${encodeURIComponent(entry.key)}`;
   applySubtitles(entry);
 
@@ -1583,6 +1623,10 @@ function applySubtitles(entry) {
 
   const cc = document.getElementById("player-cc");
   cc.hidden = !entry.hasCaptions;
+  // An offset is a correction *to* a transcript, so without one there is nothing
+  // to correct and the box would be a control over nothing.
+  document.getElementById("player-offset").hidden = !entry.hasCaptions;
+  player.captionsKey = entry.hasCaptions ? entry.key : "";
   if (!entry.hasCaptions) return;
 
   const track = document.createElement("track");
@@ -1710,6 +1754,97 @@ function stepCueSize(delta) {
 document.getElementById("player-cc-smaller").addEventListener("click", () => stepCueSize(-CUE_STEP));
 document.getElementById("player-cc-bigger").addEventListener("click", () => stepCueSize(CUE_STEP));
 
+// ── Lining the transcript up with the picture ────────────────────────────────
+
+/** Twenty minutes either way. The server clamps to the same number. */
+const OFFSET_MAX = 1200;
+
+/**
+ * Set how far the file runs ahead of its transcript, and remember it.
+ *
+ * Applied to the running player immediately and saved without waiting, because
+ * this is a control you judge by ear: you nudge it a second, listen to whether
+ * the subtitle now matches the mouth, and nudge again. A debounce would make the
+ * thing you are listening for arrive after you had moved on.
+ *
+ * `save: false` is for opening a lecture, where the number came out of the
+ * database in the first place and writing it back would be a round trip to say
+ * nothing.
+ */
+function setOffset(seconds, { save = true } = {}) {
+  const was = player.offset;
+  const raw = Number(seconds);
+  const at = Math.max(-OFFSET_MAX, Math.min(OFFSET_MAX, Math.round((Number.isFinite(raw) ? raw : 0) * 10) / 10));
+  player.offset = at;
+  showOffset();
+  showClock();
+  if (!save) return;
+
+  if (was !== at) {
+    // The cues carry times, and a TextTrack the browser has already parsed can't
+    // be shifted — so the corrected file has to be fetched again.
+    reloadCaptions();
+    highlightAt(toNotes(videoEl.currentTime));
+  }
+
+  const id = player.lectureId;
+  if (!id) return;
+  const entry = state.entries.find((e) => e.id === id);
+  if (entry) entry.captionOffset = at;
+  post("/api/lectures/offset", { id, seconds: at }).catch(() => {});
+}
+
+/** Re-fetch the transcript with the current offset baked into its timings. */
+function reloadCaptions() {
+  const track = videoEl.querySelector("track");
+  if (!track || !player.captionsKey) return;
+  const on = document.getElementById("player-cc").getAttribute("aria-pressed") === "true";
+  // Cache-busted: the URL is otherwise identical and the browser would reuse
+  // what it already has, which is the file shifted by the previous number.
+  track.src = `/api/subtitles?key=${encodeURIComponent(player.captionsKey)}&at=${Date.now()}`;
+  setSubtitles(on);
+}
+
+/** "90", "-4", "1:30" — all reasonable things to type into the box. */
+function readOffset(text) {
+  const value = text.trim();
+  if (value.includes(":")) {
+    const sign = value.startsWith("-") ? -1 : 1;
+    const parsed = parseClock(value.replace(/^[-+]/, ""));
+    return parsed === null ? null : sign * parsed;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The box, and whether it is currently doing anything. */
+function showOffset() {
+  const label = document.getElementById("player-offset");
+  label.classList.toggle("set", Math.abs(player.offset) >= 0.05);
+
+  const box = document.getElementById("align-value");
+  // Left alone while it has the caret: overwriting what someone is typing with a
+  // rounded version of itself is the classic way to make a box unusable.
+  if (document.activeElement !== box) box.value = String(player.offset);
+}
+
+// On change rather than on every keystroke: each one re-fetches the transcript,
+// and typing "90" would spend a request on "9" along the way.
+document.getElementById("align-value").addEventListener("change", (event) => {
+  const parsed = readOffset(event.target.value);
+  // Unreadable goes back to what it was rather than to zero. Zero is a real
+  // setting here, and quietly adopting it would throw away a correction over a
+  // typo.
+  if (parsed === null) { showOffset(); return; }
+  setOffset(parsed);
+});
+
+// Enter to apply without leaving the box, since the thing you check afterwards
+// is the video rather than anything else on the page.
+document.getElementById("align-value").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") { event.preventDefault(); event.target.blur(); }
+});
+
 // The size is a share of the picture, so it has to be recomputed whenever the
 // picture changes shape — dragging the divider, going full screen, resizing the
 // window. One observer covers all three.
@@ -1772,11 +1907,34 @@ function teardownPlayer() {
 }
 
 videoEl.addEventListener("timeupdate", () => {
-  document.getElementById("player-clock").textContent = clockText(videoEl.currentTime);
-  highlightAt(videoEl.currentTime);
+  showClock();
+  highlightAt(toNotes(videoEl.currentTime));
   saveProgress();
   followReel();
 });
+
+/**
+ * The clock under the video: where you are, and how much there is.
+ *
+ * In notes time, because every other time on the screen is — the timestamps in
+ * the notes, the spans in the reel, the subtitles. On a lecture whose file has
+ * an untrimmed front, the file's own clock is the odd one out, and it is already
+ * shown by the browser's controls a few pixels below.
+ *
+ * The total is what makes an offset findable in the first place: a recording
+ * whose transcript stops four minutes before the picture does is exactly the
+ * case this exists for, and you cannot see that from a clock that only counts up.
+ */
+function showClock() {
+  const total = Number.isFinite(videoEl.duration) ? toNotes(videoEl.duration) : 0;
+  const at = toNotes(videoEl.currentTime);
+  const clock = document.getElementById("player-clock");
+  clock.textContent = total > 0 ? `${clockText(at)} / ${clockText(total)}` : clockText(at);
+  clock.title = player.offset
+    ? `The transcript's clock. The file is ${clockText(Math.abs(player.offset))} `
+      + `${player.offset > 0 ? "ahead" : "behind"} — it reads ${clockText(videoEl.currentTime)} here.`
+    : "Position in the lecture";
+}
 
 // ── Where you got to ─────────────────────────────────────────────────────────
 
@@ -1802,9 +1960,11 @@ videoEl.addEventListener("loadedmetadata", () => {
   const length = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
   if (length > 0 && at > length - 10) return;
 
+  // Stored and restored in video time: it is a position in the file, and the
+  // file is the thing that hasn't changed if the transcript is refetched.
   videoEl.currentTime = at;
-  highlightAt(at);
-  toast(`Picking up where you left off — ${clockText(at)}.`);
+  highlightAt(toNotes(at));
+  toast(`Picking up where you left off — ${clockText(toNotes(at))}.`);
 });
 
 /**
@@ -1872,7 +2032,7 @@ window.addEventListener("pagehide", () => {
 });
 // Fires while the scrubber is being dragged, which is what makes the notes move
 // as you scrub rather than only once you let go.
-videoEl.addEventListener("seeking", () => highlightAt(videoEl.currentTime));
+videoEl.addEventListener("seeking", () => highlightAt(toNotes(videoEl.currentTime)));
 videoEl.addEventListener("error", () => {
   if (player.active) toast("That video file couldn't be played. Chrome only handles MP4, WebM and MOV.", "bad");
 });
@@ -2280,8 +2440,9 @@ async function askExplain({ question = "", selection = "", at = null } = {}) {
       whole,
       key: state.drawerKey,
       // The passage's own place in the lecture when there is one, the video's
-      // otherwise. See notesSelection().
-      atSeconds: Math.floor(at ?? videoEl.currentTime ?? 0),
+      // otherwise. See notesSelection(). Notes time either way — the far end
+      // looks this up in the transcript, which is the frame the notes are in.
+      atSeconds: Math.floor(at ?? toNotes(videoEl.currentTime ?? 0)),
       question,
       selection,
       // Everything up to but not including the turn just pushed — the server
@@ -2620,10 +2781,15 @@ function renderReel() {
   list.replaceChildren(...nodes);
 }
 
-/** Our own seek, marked as ours so it isn't read as you taking over. */
+/**
+ * Our own seek, marked as ours so it isn't read as you taking over.
+ *
+ * Spans are notes time; the playhead is video time. `seekTo` stays in notes time
+ * so the "was this us?" test below compares two numbers in the same frame.
+ */
 function reelSeek(seconds) {
   reel.seekTo = seconds;
-  videoEl.currentTime = seconds;
+  videoEl.currentTime = toVideo(seconds);
 }
 
 /**
@@ -2652,7 +2818,7 @@ function playSegment(segment) {
   const index = reelSegments().findIndex((s) => s.start === segment.start);
   if (index < 0) {
     setReelOn(false, { silent: true });
-    videoEl.currentTime = segment.start;
+    videoEl.currentTime = toVideo(segment.start);
     return;
   }
   setReelOn(true, { silent: true, at: index });
@@ -2685,7 +2851,7 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
   // Already steering and nowhere particular to go: leave it where it is.
   if (was && at < 0) return;
 
-  const t = videoEl.currentTime;
+  const t = toNotes(videoEl.currentTime);
   const inside = segments.findIndex((s) => t >= s.start && t < s.end);
   const next = segments.findIndex((s) => s.start > t);
   const index = at >= 0 ? at : inside >= 0 ? inside : next >= 0 ? next : 0;
@@ -2708,7 +2874,7 @@ function followReel() {
   const segments = reelSegments();
   const current = segments[reel.index];
   if (!current) return;
-  if (videoEl.currentTime < current.end) return;
+  if (toNotes(videoEl.currentTime) < current.end) return;
 
   if (reel.index + 1 >= segments.length) {
     // The end of the reel is the end of watching, not a jump back to the top.
@@ -2732,7 +2898,7 @@ function followReel() {
  */
 videoEl.addEventListener("seeking", () => {
   if (!reel.on) return;
-  const t = videoEl.currentTime;
+  const t = toNotes(videoEl.currentTime);
   if (Math.abs(t - reel.seekTo) < 0.75) return;
   reel.seekTo = -1;
 
@@ -2818,7 +2984,7 @@ document.getElementById("reel-presets").addEventListener("click", (event) => {
   reel.preset = preset;
   // Re-landed rather than left where it was: this is a different set of spans,
   // and the index is a position in *this* list.
-  const t = videoEl.currentTime;
+  const t = toNotes(videoEl.currentTime);
   const segments = reelSegments();
   const inside = segments.findIndex((s) => t >= s.start && t < s.end);
   reel.index = reel.on ? (inside >= 0 ? inside : Math.max(0, segments.findIndex((s) => s.start > t))) : -1;
