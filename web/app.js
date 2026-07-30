@@ -1598,6 +1598,7 @@ function setupPlayer(entry, play) {
   // before you press it.
   const reelOff = state.settings.values["highlights.enabled"] === false;
   document.getElementById("player-highlights").hidden = reelOff;
+  document.getElementById("player-highlights-open").hidden = reelOff;
   if (!reelOff) loadReel(entry.key);
 
   // A tab strip is only a tab strip while both tabs exist. With one feature
@@ -1875,6 +1876,7 @@ function teardownPlayer() {
   document.getElementById("player-explain").hidden = true;
   document.getElementById("player-explain-open").hidden = true;
   document.getElementById("player-highlights").hidden = true;
+  document.getElementById("player-highlights-open").hidden = true;
   document.getElementById("player-pane").hidden = true;
 
   // The reel goes with the lecture, like the conversation does. The file stays
@@ -2472,13 +2474,6 @@ async function askExplain({ question = "", selection = "", at = null } = {}) {
 // Asks about right now, and spends a call doing it.
 document.getElementById("player-explain").addEventListener("click", () => askExplain());
 
-// Opens the panel and asks nothing.
-document.getElementById("player-explain-open").addEventListener("click", () => {
-  const open = explainDock.hidden;
-  explainOpen(open);
-  if (open) document.getElementById("explain-input").focus();
-});
-
 document.getElementById("explain-close").addEventListener("click", () => explainOpen(false));
 
 document.getElementById("explain-whole").addEventListener("click", () => {
@@ -2671,18 +2666,18 @@ function dockTab(which) {
 }
 
 /**
- * What the two player-bar buttons say about the dock.
+ * What the two panel buttons say about the dock.
  *
- * Each one discloses a panel, so what it reports is whether *its* panel is the
- * one showing — not merely that the dock is open, which had the Explain chip
- * looking pressed while you were reading the reel. The Highlights chip keeps its
- * own lit state on top of this, for whether the reel is steering: a different
- * fact about a different thing, and the one that explains why the video jumps.
+ * Each reports whether *its* panel is the one showing, not merely that the dock
+ * is open — which had the Explain button looking pressed while you were reading
+ * the reel. Expanded rather than pressed, because what they do is disclose a
+ * panel; pressed belongs to Highlights beside them, which toggles something.
  */
 function showDockChips() {
   const tab = dockEl.hidden ? "" : dockEl.dataset.tab;
-  document.getElementById("player-highlights").setAttribute("aria-expanded", String(tab === "highlights"));
-  document.getElementById("player-explain-open").setAttribute("aria-pressed", String(tab === "explain"));
+  for (const [id, name] of [["player-highlights-open", "highlights"], ["player-explain-open", "explain"]]) {
+    document.getElementById(id).setAttribute("aria-expanded", String(tab === name));
+  }
 }
 
 document.getElementById("dock-tab-explain").addEventListener("click", () => dockTab("explain"));
@@ -2741,7 +2736,6 @@ function reelLengths() {
 
 function renderReel() {
   reelLengths();
-  showReelPlay();
   const list = document.getElementById("reel-list");
   const form = document.getElementById("reel-form");
   const saved = reelCurrent();
@@ -2854,10 +2848,11 @@ function setReelOn(on, { silent = false, at = -1 } = {}) {
   if (on && segments.length === 0) return;
   const was = reel.on;
   reel.on = on;
-  // Lit in the bar even with the panel closed: this is the state that explains
-  // why the video keeps jumping, and it has to be visible from wherever you are.
-  document.getElementById("player-highlights").classList.toggle("on", on);
-  showReelPlay();
+  // Lit in the bar whether or not the panel is open: this is the state that
+  // explains why the video keeps jumping, and it has to read from wherever you
+  // are. Pressed rather than a class of its own — the button is a toggle again,
+  // and this is what it is a toggle of.
+  document.getElementById("player-highlights").setAttribute("aria-pressed", String(on));
 
   if (!on) {
     reel.index = -1;
@@ -2967,37 +2962,44 @@ const buildReel = guard(async (preset, steer = "") => {
  * Build beside them, and the press that costs money is the one labelled Build.
  */
 /**
- * The player bar's Highlights button: open the panel, or close it.
+ * The player bar's Highlights button: play the reel, or stop.
  *
- * Only that. It used to toggle the *steering* as well, which made one button
- * mean two things depending on whether a reel happened to exist — press it with
- * nothing built and the panel opened, press it with something built and the
- * video started jumping instead. Playing the reel now has its own control inside
- * the panel, next to the reel it plays.
+ * The panel is the button beside it, so this one has a single job. With nothing
+ * built there is no reel to steer, and it opens the panel instead — the choice
+ * of which reel to cut is the only thing that could happen next, and it lives
+ * there.
  */
 document.getElementById("player-highlights").addEventListener("click", () => {
-  const showing = !dockEl.hidden && dockEl.dataset.tab === "highlights";
-  if (showing) { explainOpen(false); showDockChips(); return; }
-  explainOpen(true);
-  dockTab("highlights");
-});
-
-/** Play the reel, or stop steering. Hidden until there is one to play. */
-document.getElementById("reel-play").addEventListener("click", () => {
   if (reel.busy) return;
+  if (!reelCurrent()) {
+    if (reel.payload?.unavailable) { toast(reel.payload.unavailable, "bad"); return; }
+    explainOpen(true);
+    dockTab("highlights");
+    return;
+  }
   setReelOn(!reel.on);
 });
 
-/** Only offered when this preset has a reel behind it. */
-function showReelPlay() {
-  const button = document.getElementById("reel-play");
-  button.hidden = !reelCurrent() || Boolean(reel.busy);
-  button.setAttribute("aria-pressed", String(reel.on));
-  button.textContent = reel.on ? "Stop" : "Play";
-  button.title = reel.on
-    ? "Stop steering — play the whole lecture again"
-    : "Play only these spans, in order, from wherever you are";
+/**
+ * The two panel buttons, one per feature, sharing an icon.
+ *
+ * Each toggles the dock onto its own panel, and closes it when that panel is
+ * already the one showing. Same gesture, same glyph; which panel it means is
+ * said by the group it sits in rather than by a different picture.
+ */
+function panelButton(id, tab, onOpen) {
+  document.getElementById(id).addEventListener("click", () => {
+    if (!dockEl.hidden && dockEl.dataset.tab === tab) { explainOpen(false); return; }
+    explainOpen(true);
+    dockTab(tab);
+    if (onOpen) onOpen();
+  });
 }
+
+panelButton("player-highlights-open", "highlights");
+// Opening Explain deliberately puts the caret in the box: you opened it to type
+// a question, since the button that asks one without typing is right beside it.
+panelButton("player-explain-open", "explain", () => document.getElementById("explain-input").focus());
 
 /**
  * The three buttons: switch to a reel, or cut one if it doesn't exist yet.

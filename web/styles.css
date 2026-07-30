@@ -660,12 +660,6 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
    rather than sitting there as a control that would do nothing. */
 .chip-btn:disabled { opacity: .35; cursor: default; }
 .player-clock { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-/* The reel is steering. Not the same as "the panel is open", which is what the
-   button's aria-expanded says and needs no colour — the panel is its own
-   evidence. This is why the video keeps jumping, and it has to read from
-   anywhere in the player. */
-.chip-btn.on { color: var(--ready); background: var(--ready-wash); }
-
 /* ── Lining the transcript up with the picture ───────────────────────────── */
 
 /* Not in a segmented group: this is a number you type, not a button you press,
@@ -780,21 +774,9 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
 .reel-weight { flex: 0 0 auto; font-family: var(--mono); font-size: .72rem; color: var(--faint); }
 
 .reel-presets {
-  display: flex; align-items: stretch; gap: .5rem;
-  padding: .5rem .9rem; border-top: 1px solid var(--line);
+  display: flex; gap: .4rem; padding: .5rem .9rem; border-top: 1px solid var(--line);
 }
 .reel-presets[hidden] { display: none; }
-/* The three take the room; Play takes what it needs. */
-.reel-preset-group { display: flex; gap: .4rem; flex: 1; min-width: 0; }
-.reel-play {
-  flex: 0 0 auto; background: var(--paper); border: 1px solid var(--line-firm);
-  border-radius: 5px; padding: .3rem .8rem; font: inherit; font-size: var(--s-1);
-  color: var(--ink); cursor: pointer;
-}
-.reel-play:hover { border-color: var(--ink); }
-.reel-play[hidden] { display: none; }
-/* Steering. The one control on screen that explains why the video is jumping. */
-.reel-play[aria-pressed="true"] { color: var(--ready); border-color: var(--ready); background: var(--ready-wash); }
 .reel-preset {
   flex: 1; background: var(--paper); border: 1px solid var(--line); border-radius: 5px;
   padding: .3rem .5rem; font: inherit; font-size: var(--s-1); color: var(--muted); cursor: pointer;

@@ -667,11 +667,16 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   // The *spoken* length, not the file's, and deliberately so.
   //
   // This is what the preset shares are shares of, and the two numbers differ by
-  // more than you would guess: the recording that prompted this runs 59:52 and
-  // the last thing anyone says is at 43:52, the rest being an empty room. Budget
+  // more than you would guess: the recording that prompted this runs 59:52 while
+  // its transcript ends at 43:52. Sixteen minutes of it is nobody talking —
+  // about four at the front, which Panopto trimmed for playback and the download
+  // kept (see the player's caption offset), and the rest at the end. Budget
   // against the file and a quarter of the lecture silently becomes a third,
   // spent on spans that can only come from the part where people were talking
   // anyway.
+  //
+  // Note this is a transcript time and stays one: the offset corrects playback,
+  // never the reel, so a lecture aligned after its reel was cut needs no rebuild.
   const lectureSeconds = cues[cues.length - 1].end;
 
   const notes = readNotes(key, "raw") ?? readNotes(key, "pretty");

@@ -784,14 +784,23 @@ the tail of something you were not meant to hear. Snapping the start back to a c
 boundary is what stops a cut landing mid-word, and it was always doing the work
 the lead-in was credited with. It stays as a setting, at zero.
 
-**The button in the player bar opens the panel, and does nothing else.** It used
-to toggle the steering as well, so it meant two different things depending on
-whether a reel happened to exist: press it with nothing built and a panel opened,
-press it with something built and the video started jumping. Playing the reel is
-now a control inside the panel, beside the reel it plays. Closing the panel does
-not stop it — the chip stays lit while the reel is steering, because that is the
-fact that explains why the video keeps moving, and it has to be visible from
-wherever you are.
+**Two buttons, not one that means two things.** Highlights plays the reel and
+stops it; the button beside it opens and closes the panel. That is the second
+arrangement — the first had a single button whose meaning depended on whether a
+reel happened to exist, which opened a panel when there was nothing built and
+started the video jumping when there was.
+
+The bar's right-hand end is now two groups of two, one per feature: the thing
+itself, then the panel behind it. **The two panel buttons carry the same icon on
+purpose.** It is one gesture meaning "show me this", and which panel it shows is
+said by the group it sits in, not by a second picture to learn. Each reports
+whether *its* panel is the one showing rather than merely that the dock is open,
+which had Explain looking pressed while you were reading the reel.
+
+Playing and showing are independent: closing the panel does not stop the reel,
+and the Highlights button stays lit while it steers, because that is the fact
+that explains why the video keeps moving and it has to read from wherever you
+are.
 
 **The reel is saved beside the notes**, as `highlights.json` in the lecture's own
 folder. That is load-bearing rather than an optimisation: the transcript it was
