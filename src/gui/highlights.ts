@@ -934,9 +934,17 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
           + "figure, an example or an argument in it — and in a lecture there usually is — cut it."
         : "",
       tooLong
-        ? "Your spans are also too long. Cut the run-up and the trailing-off from each one — start on "
-          + "the words that carry the point, end when it is made. Where a span covers two separate "
-          + "claims, split it into two and drop whatever sits between them."
+        ? `Your spans are too long — averaging ${Math.round(average)} seconds against the ${aimSeconds} `
+          + "this reel is cut at. Tighten them, one at a time, and prefer that to dropping any:\n"
+          + "  - Start later. Almost every span opens on the run-up rather than on the point.\n"
+          + "  - End earlier. Stop on the words that land it, not on the sentence after that "
+          + "restates it or the aside that follows it.\n"
+          + "  - Where a span carries a good half and a dull half, keep the good half.\n"
+          + "Then, once each one is as tight as it can be and still make sense, look at the reel as a "
+          + "whole. If it is still far longer than the brief, drop the spans that add least to the "
+          + "story — the ones a listener would not miss — rather than shaving the good ones further. "
+          + "What has to come out of this is a cohesive cut that plays as one story, not a long one "
+          + "with every moment in it."
         : "",
       tooFew && holes.length === 0
         ? "You have too few. Work through the transcript again from the start, in order, and find the "
@@ -954,12 +962,29 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
     ]);
     if (second) {
       const revised = clean(read(second), cues, lectureSeconds, limits);
-      // Kept only if it actually improved on what was complained about: more
-      // cuts, or the same cuts covering more of the lecture. A revision that came
-      // back thinner is a worse reel, and having paid for it is no reason to use
-      // it.
+      const revisedAverage = revised.length > 0
+        ? revised.reduce((sum, s) => sum + (s.end - s.start), 0) / revised.length
+        : 0;
+      const revisedHoles = gaps(revised, lectureSeconds, cfg.maxGapSeconds).length;
+      // Kept only if it improved on what was complained about — and "what was
+      // complained about" has to include length, which it did not.
+      //
+      // The note asks a reel with over-long spans to tighten them. The model
+      // does exactly that and hands back the same number of shorter spans, and
+      // the old test — more spans, or fewer holes — is false for both, so the
+      // revision was discarded every time. A second call was being paid for, the
+      // right revision was coming back, and it was thrown away unread. It is why
+      // reel length never moved however the brief was worded.
+      //
+      // Tightening counts only while coverage holds: spans that got shorter by
+      // dropping half the lecture is not the trade being asked for.
+      const tighter = tooLong
+        && revisedAverage < average * 0.9
+        && revised.length >= cleaned.length * 0.8
+        && revisedHoles <= holes.length;
       const better = revised.length > cleaned.length
-        || gaps(revised, lectureSeconds, cfg.maxGapSeconds).length < holes.length;
+        || revisedHoles < holes.length
+        || tighter;
       if (better) {
         cleaned = revised;
         reply = second;

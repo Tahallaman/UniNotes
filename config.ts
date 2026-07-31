@@ -773,9 +773,17 @@ export const DEFAULTS = {
      * ends within this many seconds the span stops where it was — better a hard
      * cut than a span that swallowed the next point.
      *
+     * Six, not twelve. Twelve was chosen as "long enough to reach a full stop"
+     * without checking what it cost: a cue runs about six and a half seconds, so
+     * twelve reliably swallowed a second whole cue looking for punctuation.
+     * Measured on a 78-minute Skim, the run-on was adding a median of eight
+     * seconds to every span — 46 of its 54 — which on a reel cut at ten-second
+     * moments is the entire budget again. Six reaches the next cue and stops,
+     * which is where the sentence ends in almost every case that matters.
+     *
      * 0 turns it off.
      */
-    finishSentenceSeconds: 12,
+    finishSentenceSeconds: 6,
     /**
      * Spans closer together than this are one span, in seconds.
      *
