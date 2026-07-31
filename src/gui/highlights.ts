@@ -985,6 +985,16 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
       const better = revised.length > cleaned.length
         || revisedHoles < holes.length
         || tighter;
+      // Logged either way. A second pass is a call that has been paid for, and
+      // whether its answer was used is not something to have to infer from the
+      // reel afterwards — the last time this went wrong, the revision was being
+      // discarded silently and the symptom looked like a prompt that would not
+      // take effect.
+      log.info(
+        `highlights: revision came back ${revised.length} spans averaging ${Math.round(revisedAverage)}s, `
+        + `${revisedHoles} uncovered — ${better ? "kept" : "discarded"}`
+        + `${better ? "" : ` (was ${cleaned.length} at ${Math.round(average)}s, ${holes.length} uncovered)`}`,
+      );
       if (better) {
         cleaned = revised;
         reply = second;
@@ -1018,8 +1028,9 @@ export async function buildHighlights(request: BuildRequest): Promise<ReelPayloa
   };
   writeReel(key, reel);
   log.info(
-    `highlights: ${preset} — ${segments.length} spans, ${clockText(reel.seconds)}`
-    + `${cleaned.length > segments.length ? ` (${cleaned.length - segments.length} trimmed to fit)` : ""}`,
+    `highlights: ${preset} — ${segments.length} spans, ${clockText(reel.seconds)}, `
+    + `${Math.round((100 * reel.seconds) / lectureSeconds)}% of the lecture `
+    + `(brief asked ${presetCfg.share}%)`,
   );
 
   return payload(readReels(key));
