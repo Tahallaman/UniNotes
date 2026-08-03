@@ -1,5 +1,21 @@
 /* UniNotes control panel — client.
-   Vanilla ES modules, no build step, no dependencies. */
+   Vanilla ES modules, no build step. KaTeX is the one dependency, and it is
+   fetched on its own so that nothing else here depends on it arriving. */
+
+// ── Maths ────────────────────────────────────────────────────────────────────
+
+/**
+ * KaTeX, served out of node_modules by the /katex/ route.
+ *
+ * Deliberately not a top-level `import`: that would make every button on this
+ * page conditional on a maths library loading, and a missing or corrupt copy
+ * would take the whole panel down rather than just the equations. This way the
+ * worst case is that formulae show as their own LaTeX, which is still readable.
+ */
+let katex = null;
+const katexReady = import("/katex/katex.mjs")
+  .then((module) => { katex = module.default ?? module; })
+  .catch(() => { /* renderMath() falls back to the source text */ });
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -1119,6 +1135,10 @@ async function loadNotes() {
   const target = document.getElementById("drawer-notes");
   if (!state.drawerKey) return;
   swapNotes(target, el("p", { class: "console-idle", text: "Loading…" }));
+  // Equations are rendered in the same pass as the prose, so KaTeX has to be
+  // here before the pass runs. It is a local file behind a "Loading…" that was
+  // going to be on screen anyway, and only the very first note ever waits.
+  await katexReady;
   try {
     if (state.noteTab === "transcript") {
       const vtt = await getText(`/api/subtitles?key=${encodeURIComponent(state.drawerKey)}`);
@@ -3833,6 +3853,10 @@ function renderMarkdown(source) {
     text = text.slice(frontmatter[0].length);
   }
 
+  // Before anything else reads a line. See extractMath().
+  const math = extractMath(text);
+  text = math.text;
+
   const html = [];
   const lines = text.split(/\r?\n/);
   let listType = null;
@@ -3902,13 +3926,24 @@ function renderMarkdown(source) {
     if (numbered) { openList("ol"); html.push(`<li>${inline(numbered[1])}</li>`); continue; }
 
     closeList();
+
+    // A $$…$$ block sitting on its own line gets its own paragraph rather than
+    // a bare <div>, so the sync machinery treats it as a block like any other:
+    // it inherits the timestamp above it and highlights with the point it
+    // belongs to, instead of staying dark in the middle of a lit section.
+    const alone = MATH_ALONE.exec(line.trim());
+    if (alone && math.spans[Number(alone[1])]?.display) {
+      html.push(`<p class="math-block">${line.trim()}</p>`);
+      continue;
+    }
+
     html.push(`<p>${inline(line)}</p>`);
   }
   if (inCode && codeLines.length) html.push(`<pre>${escapeHtml(codeLines.join("\n"))}</pre>`);
   closeList();
 
   const body = el("div");
-  body.innerHTML = html.join("");
+  body.innerHTML = fillMath(html.join(""), math.spans);
   container.append(body);
   return container;
 }
@@ -3936,6 +3971,164 @@ function inline(text) {
       '<span class="ts">[$1]</span>',
     )
     .replace(/\[(\d{1,2}:[0-5]\d(?::[0-5]\d)?)\]/g, '<span class="ts">[$1]</span>');
+}
+
+// ── Maths in notes ───────────────────────────────────────────────────────────
+
+// Private-use characters. A placeholder made of these cannot collide with
+// anything a lecture actually says, and — this is the point — it survives
+// escapeHtml() and every regex in inline() without being touched.
+const MATH_TOKEN = /\uE000(\d+)\uE001/g;
+const MATH_ALONE = /^\uE000(\d+)\uE001$/;
+
+/**
+ * Lift every $…$ and $$…$$ span out of the source before the parser sees it.
+ *
+ * Maths is not Markdown and must not be read as it. `x_i^2` is a subscript and a
+ * power, not emphasis; `\{a\}` is a set, not an escape; and `$|x|$` inside a
+ * table row has pipes that would otherwise be split into cells. Pulling the
+ * spans out first — rather than trying to skip them later — means none of the
+ * block or inline rules ever get the chance to misread one.
+ *
+ * Returns the source with each span replaced by a placeholder, plus the spans in
+ * the order they were found. fillMath() puts them back once the HTML is built.
+ */
+function extractMath(text) {
+  const spans = [];
+  const out = [];
+  let i = 0;
+  let fenced = false;
+
+  while (i < text.length) {
+    // Fenced code, checked at the start of a line: a shell snippet full of $VAR
+    // is not a lecture's worth of algebra.
+    if (i === 0 || text[i - 1] === "\n") {
+      const end = text.indexOf("\n", i);
+      const line = end === -1 ? text.slice(i) : text.slice(i, end);
+      if (/^\s*```/.test(line)) {
+        out.push(line);
+        i += line.length;
+        fenced = !fenced;
+        continue;
+      }
+    }
+
+    const ch = text[i];
+    if (fenced) { out.push(ch); i++; continue; }
+
+    // `code` spans, verbatim, for the same reason.
+    if (ch === "`") {
+      let run = 0;
+      while (text[i + run] === "`") run++;
+      const close = text.indexOf("`".repeat(run), i + run);
+      if (close !== -1) {
+        out.push(text.slice(i, close + run));
+        i = close + run;
+        continue;
+      }
+      // Never closed, so it was never a code span. Fall through as plain text.
+    }
+
+    // \$ is how a note asks for a literal dollar sign. We are the ones giving $
+    // a meaning, so we are the ones who take the backslash back off.
+    if (ch === "\\" && text[i + 1] === "$") { out.push("$"); i += 2; continue; }
+
+    if (ch === "$") {
+      const found = text[i + 1] === "$" ? readDisplay(text, i) : readInline(text, i);
+      if (found) {
+        spans.push(found.span);
+        out.push(`\uE000${spans.length - 1}\uE001`);
+        i = found.end;
+        continue;
+      }
+    }
+
+    out.push(ch);
+    i++;
+  }
+
+  return { text: out.join(""), spans };
+}
+
+/**
+ * $$…$$, which is free to run over several lines but not over a blank one.
+ * Displayed maths never contains a paragraph break, so that rule costs nothing
+ * and stops one unmatched $$ from swallowing the rest of the lecture.
+ */
+function readDisplay(text, at) {
+  const close = text.indexOf("$$", at + 2);
+  if (close === -1) return null;
+  const body = text.slice(at + 2, close);
+  if (/\n[ \t]*\n/.test(body)) return null;
+  const source = body.trim();
+  if (!source) return null;
+  return { span: { source, display: true }, end: close + 2 };
+}
+
+/**
+ * $…$, and the whole job here is telling algebra from money.
+ *
+ * A span opens on a $ with a non-space after it, and closes on the next $ — but
+ * only if that $ has a non-space before it and no digit after it. The first $
+ * that fails either test abandons the attempt rather than being skipped past.
+ * That distinction is the whole thing: skipping would read "it cost $5, and $x$
+ * is unknown" as one formula running from the 5 all the way to the x. Giving up
+ * instead costs nothing, because the outer scan resumes one character on and
+ * finds the real $x$ where it starts.
+ *
+ * A span may not cross a line either, so a single unmatched $ costs a line at
+ * worst rather than the rest of the document.
+ */
+function readInline(text, at) {
+  if (/[\s$]/.test(text[at + 1] ?? "")) return null;
+
+  for (let i = at + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\n") return null;
+    if (ch === "\\") { i++; continue; }
+    if (ch !== "$") continue;
+    if (/\s/.test(text[i - 1]) || /\d/.test(text[i + 1] ?? "")) return null;
+    const source = text.slice(at + 1, i);
+    return source ? { span: { source, display: false }, end: i + 1 } : null;
+  }
+  return null;
+}
+
+/** Placeholders → rendered equations, once the surrounding HTML is built. */
+function fillMath(html, spans) {
+  return html.replace(MATH_TOKEN, (whole, index) => {
+    const span = spans[Number(index)];
+    return span ? renderMath(span) : whole;
+  });
+}
+
+/**
+ * One equation.
+ *
+ * Nothing here throws. Notes are model output, so malformed LaTeX is a matter of
+ * when rather than whether, and a page that dies on one bad formula loses you
+ * the whole lecture. KaTeX's own error rendering shows the offending source in
+ * the warning colour with the parse error on hover, which is the most useful
+ * thing to put on screen; if KaTeX itself never arrived, the source alone is.
+ */
+function renderMath({ source, display }) {
+  if (!katex) return `<code class="math-raw">${escapeHtml(source)}</code>`;
+  try {
+    return katex.renderToString(source, {
+      displayMode: display,
+      output: "htmlAndMathml",
+      throwOnError: false,
+      errorColor: "var(--broken)",
+      // Off the leash on syntax, on it for anything that draws: \htmlClass and
+      // friends stay disabled, and a \rule cannot grow past the column.
+      strict: false,
+      trust: false,
+      maxSize: 40,
+      maxExpand: 1000,
+    });
+  } catch {
+    return `<code class="math-raw">${escapeHtml(source)}</code>`;
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

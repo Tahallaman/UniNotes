@@ -66,10 +66,26 @@ const STATIC_FILES: Record<string, string> = {
   "/styles.css": "styles.css",
 };
 
+/**
+ * KaTeX, served straight out of node_modules under /katex/.
+ *
+ * Not copied into web/, because a megabyte of font binaries in the repo to
+ * duplicate something npm already installed is a copy that will go stale. Names
+ * are matched, never joined from the URL, so this cannot walk out of dist/ any
+ * more than the map above can walk out of web/.
+ */
+const KATEX_DIR = path.join(CONFIG.rootDir, "node_modules", "katex", "dist");
+const KATEX_FILES = new Set(["katex.mjs", "katex.min.css"]);
+const KATEX_FONT = /^KaTeX_[A-Za-z0-9]+-[A-Za-z]+\.(?:woff2|woff|ttf)$/;
+
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
 };
 
 // ── Shutdown ──────────────────────────────────────────────────────────────────
@@ -692,6 +708,11 @@ async function handleApi(
 }
 
 function serveStatic(pathname: string, res: http.ServerResponse): void {
+  if (pathname.startsWith("/katex/")) {
+    serveKatex(pathname.slice("/katex/".length), res);
+    return;
+  }
+
   const filename = STATIC_FILES[pathname];
   if (!filename) {
     res.writeHead(404, { "content-type": "text/plain" });
@@ -699,16 +720,42 @@ function serveStatic(pathname: string, res: http.ServerResponse): void {
     return;
   }
 
+  sendFile(path.join(WEB_DIR, filename), res, "no-store");
+}
+
+/**
+ * The library and the fonts its stylesheet asks for, and nothing else.
+ *
+ * Cached, unlike web/, because these are versioned by package.json rather than
+ * edited — re-fetching 3 MB of fonts on every reload of a panel you leave open
+ * all day is a cost with nothing bought by it.
+ */
+function serveKatex(name: string, res: http.ServerResponse): void {
+  const font = /^fonts\/(.+)$/.exec(name);
+  const file = font
+    ? (KATEX_FONT.test(font[1]) ? path.join(KATEX_DIR, "fonts", font[1]) : null)
+    : (KATEX_FILES.has(name) ? path.join(KATEX_DIR, name) : null);
+
+  if (!file) {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("Not found");
+    return;
+  }
+
+  sendFile(file, res, "public, max-age=604800");
+}
+
+function sendFile(file: string, res: http.ServerResponse, cache: string): void {
   try {
-    const content = fs.readFileSync(path.join(WEB_DIR, filename));
+    const content = fs.readFileSync(file);
     res.writeHead(200, {
-      "content-type": CONTENT_TYPES[path.extname(filename)] ?? "application/octet-stream",
-      "cache-control": "no-store",
+      "content-type": CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream",
+      "cache-control": cache,
     });
     res.end(content);
   } catch {
     res.writeHead(500, { "content-type": "text/plain" });
-    res.end(`Could not read web/${filename}`);
+    res.end(`Could not read ${path.basename(file)}`);
   }
 }
 

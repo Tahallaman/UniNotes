@@ -930,6 +930,32 @@ body.is-stopped #shutdown { opacity: .45; pointer-events: none; }
 .notes th, .notes td { border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }
 .notes th { background: var(--sunken); font-weight: 600; }
 
+/* ── Maths ───────────────────────────────────────────────────────────────── */
+
+/* KaTeX draws the equations. These rules only settle them into a column that
+   was laid out for prose, and they apply wherever notes are rendered — the
+   drawer and the Explain answers both. */
+
+/* KaTeX's 1.21em against our body size reads as shouting next to the sentence
+   it sits in; this brings it to just above the surrounding text, which is where
+   an inline formula should sit. Colour is left alone deliberately: it inherits,
+   so both themes and the highlight wash come out right for free. */
+.katex { font-size: 1.06em; }
+
+/* A long derivation is allowed to scroll inside its own line rather than push
+   the whole notes column sideways. The padding is for the scrollbar and for
+   descenders the overflow would otherwise clip. */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: .35rem 0; }
+
+/* The paragraph already carries the spacing, and .katex-display brings 1em of
+   its own — without this every displayed equation sits in a double gap. */
+.notes .math-block { margin: .9rem 0 1.1rem; }
+.notes .math-block .katex-display { margin: 0; }
+
+/* KaTeX never arrived, or the equation was too broken to parse. Either way the
+   LaTeX itself is the most useful thing to show. */
+.math-raw { font-family: var(--mono); font-size: .92em; color: var(--ink-soft); }
+
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 
 .toast {
